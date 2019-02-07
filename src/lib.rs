@@ -34,21 +34,25 @@ pub struct IndexedMesh {
     pub triangles: Vec<IndexedTriangle>,
 }
 
-// BINARY
+// BOTH GRAMMAR
 /////////////////////////////////////////////////////////////////
 
 named!(
-    triangle_binary<Triangle>,
+    pub parse_stl<IndexedMesh>,
+    alt!(indexed_mesh_binary | indexed_mesh_ascii)
+);
+
+// BINARY GRAMMAR
+/////////////////////////////////////////////////////////////////
+
+named!(
+    pub indexed_mesh_binary<IndexedMesh>,
     do_parse!(
-        normal: count_fixed!(f32, le_f32, 3)
-            >> v1: count_fixed!(f32, le_f32, 3)
-            >> v2: count_fixed!(f32, le_f32, 3)
-            >> v3: count_fixed!(f32, le_f32, 3)
-            >> _attribute_byte_count: take!(2)
-            >> (Triangle {
-                normal: normal,
-                vertices: [v1, v2, v3]
-            })
+        _not_solid: not!(tag!("solid")) >>
+            _header: complete!(take!(80))
+            >> reported_count: complete!(le_u32)
+            >> triangles: many0!(complete!(triangle_binary))
+            >> (build_indexed_mesh(&triangles, reported_count))
     )
 );
 
@@ -66,18 +70,35 @@ named!(
 );
 
 named!(
-    pub indexed_mesh_binary<IndexedMesh>,
+    triangle_binary<Triangle>,
     do_parse!(
-        _not_solid: not!(tag!("solid")) >>
-            _header: complete!(take!(80))
-            >> reported_count: complete!(le_u32)
-            >> triangles: many0!(complete!(triangle_binary))
-            >> (build_indexed_mesh(&triangles, reported_count))
+        normal: count_fixed!(f32, le_f32, 3)
+            >> v1: count_fixed!(f32, le_f32, 3)
+            >> v2: count_fixed!(f32, le_f32, 3)
+            >> v3: count_fixed!(f32, le_f32, 3)
+            >> _attribute_byte_count: take!(2)
+            >> (Triangle {
+                normal: normal,
+                vertices: [v1, v2, v3]
+            })
     )
 );
 
-// ASCII
+// ASCII GRAMMAR
 /////////////////////////////////////////////////////////////////
+
+named!(
+    pub indexed_mesh_ascii<IndexedMesh>,
+    do_parse!(
+        tag!("solid ")
+            >> many1!(not_line_ending)
+            >> newline
+            >> triangles: many1!(complete!(triangle_ascii))
+            >> ws!(tag!("endsolid"))
+            >> rest
+            >> (build_indexed_mesh(&triangles, 0))
+    )
+);
 
 named!(
     triangle_ascii<Triangle>,
@@ -97,19 +118,6 @@ named!(
                 normal: normal,
                 vertices: [v1, v2, v3]
             })
-    )
-);
-
-named!(
-    pub indexed_mesh_ascii<IndexedMesh>,
-    do_parse!(
-        tag!("solid ")
-            >> many1!(not_line_ending)
-            >> newline
-            >> triangles: many1!(complete!(triangle_ascii))
-            >> ws!(tag!("endsolid"))
-            >> rest
-            >> (build_indexed_mesh(&triangles, 0))
     )
 );
 
