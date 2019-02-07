@@ -4,8 +4,12 @@ version = "0.1.0"
 authors = ["Clark Kampfe <clark.kampfe@gmail.com>"]
 edition = "2018"
 
+[features]
+default = ["hashbrown"]
+
 [dependencies]
 nom = "4.2"
+hashbrown = { version = "0.1", optional = true }
 
 [profile.release]
 opt-level = 3
