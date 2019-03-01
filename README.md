@@ -65,6 +65,18 @@ fn parses_ascii_indexed_mesh() {
 }
 ```
 
+# Running the tests faster
+
+To make the tests run faster (but increase build time), you can run the tests in `release` mode.
+To do this, run the following:
+
+```
+cargo test --release --features=hashbrown -- --nocapture
+```
+
+This will also use Hashbrown (a faster hashtable library). Hashbrown is totally optional, but will increase speed.
+
+
 # What does it need
 
 - [ ] A solid public API
