@@ -69,6 +69,7 @@ fn parses_ascii_indexed_mesh() {
 
 - [ ] A solid public API
 - [ ] Better tests, with better input data rather than 0's for some of the smaller parsers
+- [ ] Testing around parsing Windows/DOS line-ending files
 - [ ] Real documentation/rustdoc
 - [ ] A license
 - [ ] A home

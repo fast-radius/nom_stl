@@ -99,8 +99,8 @@ named!(
             >> many1!(not_line_ending)
             >> newline
             >> triangles: many1!(triangle_ascii)
-            >> ws!(tag!("endsolid"))
-            >> rest
+            >> tag!("endsolid")
+            >> opt!(rest)
             >> (build_indexed_mesh(&triangles, 0))
     )
 );
@@ -124,7 +124,7 @@ named!(
             >> vertex
             >> v3: ws!(three_floats)
             >> ws!(tag!("endloop"))
-            >> tag!("endfacet")
+            >> alt_complete!(ws!(tag!("endfacet")) | tag!("endfacet"))
             >> (Triangle {
                 normal: normal,
                 vertices: [v1, v2, v3]
@@ -428,8 +428,24 @@ mod tests {
         root_vase.read_to_end(&mut buf).unwrap();
         let mesh = indexed_mesh_binary(&buf);
         let end = std::time::Instant::now();
-        println!("{:?}", end - start);
+        println!("root_vase time: {:?}", end - start);
 
         assert!(mesh.is_ok());
+    }
+
+    #[test]
+    fn does_ascii_file_without_a_closing_solid_name() {
+        let mut frame_r = std::fs::File::open("./fixtures/frame_R.stl").unwrap();
+
+        let start = std::time::Instant::now();
+        let mut buf = Vec::new();
+        frame_r.read_to_end(&mut buf).unwrap();
+        let mesh = indexed_mesh_ascii(&buf);
+        let end = std::time::Instant::now();
+        println!("frame_r time: {:?}", end - start);
+
+        assert!(mesh.is_ok());
+        let (remaining, _res) = mesh.unwrap();
+        assert_eq!(remaining, &[]);
     }
 }
