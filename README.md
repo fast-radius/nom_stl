@@ -81,7 +81,14 @@ This will also use Hashbrown (a faster hashtable library). Hashbrown is totally 
 
 - [ ] A solid public API
 - [ ] Better tests, with better input data rather than 0's for some of the smaller parsers
-- [ ] Testing around parsing Windows/DOS line-ending files
+- [x] Testing around parsing Windows/DOS line-ending files
 - [ ] Real documentation/rustdoc
 - [ ] A license
 - [ ] A home
+
+# Creative Commons
+
+Attribution and thanks goes to the following people for licensing their files Creative Commons so we could include them in this project:
+
+- C4robotics for [Sailor Moon Disguise Pen](https://www.thingiverse.com/thing:1187833)
+- virtox for [Binary Roots](https://www.thingiverse.com/thing:26227)
