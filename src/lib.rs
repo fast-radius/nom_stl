@@ -5,7 +5,7 @@ use hashbrown::HashMap;
 #[cfg(not(feature = "hashbrown"))]
 use std::collections::HashMap;
 
-type Vertex = [f32; 3];
+pub type Vertex = [f32; 3];
 type Index = usize;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -97,7 +97,7 @@ named!(
     do_parse!(
         tag!("solid ")
             >> many1!(not_line_ending)
-            >> newline
+            >> line_ending
             >> triangles: many1!(triangle_ascii)
             >> tag!("endsolid")
             >> opt!(rest)
@@ -182,6 +182,7 @@ mod tests {
 
     #[test]
     fn parses_both_ascii_and_binary() {
+        // derived from: https://www.thingiverse.com/thing:1187833
         let mut moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
 
         let mut buf = Vec::new();
@@ -190,6 +191,7 @@ mod tests {
 
         assert!(&ascii_mesh.is_ok());
 
+        // credit: https://www.thingiverse.com/thing:26227
         let mut root_vase = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
 
         let mut buf2 = Vec::new();
@@ -280,8 +282,8 @@ mod tests {
 
     #[test]
     fn does_ascii_from_file() {
+        // derived from: https://www.thingiverse.com/thing:1187833
         let mut moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
-
         let mut buf = Vec::new();
         moon.read_to_end(&mut buf).unwrap();
         let mesh = indexed_mesh_ascii(&buf);
@@ -399,9 +401,9 @@ mod tests {
     fn binary_does_not_parse_ascii() {
         // this file is an ascii stl
         // credit: https://www.thingiverse.com/thing:1187833
-        let mut sailor_moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
+        let mut moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
         let mut buf = Vec::new();
-        sailor_moon.read_to_end(&mut buf).unwrap();
+        moon.read_to_end(&mut buf).unwrap();
         let mesh = indexed_mesh_binary(&buf);
 
         assert!(mesh.is_err())
@@ -411,7 +413,6 @@ mod tests {
     fn ascii_does_not_parse_binary() {
         // credit: https://www.thingiverse.com/thing:26227
         let mut root_vase = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
-
         let mut buf = Vec::new();
         root_vase.read_to_end(&mut buf).unwrap();
         let mesh = indexed_mesh_ascii(&buf);
@@ -421,8 +422,8 @@ mod tests {
 
     #[test]
     fn does_binary_from_file() {
+        // credit: https://www.thingiverse.com/thing:26227
         let mut root_vase = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
-
         let start = std::time::Instant::now();
         let mut buf = Vec::new();
         root_vase.read_to_end(&mut buf).unwrap();
@@ -435,17 +436,26 @@ mod tests {
 
     #[test]
     fn does_ascii_file_without_a_closing_solid_name() {
-        let mut frame_r = std::fs::File::open("./fixtures/frame_R.stl").unwrap();
-
-        let start = std::time::Instant::now();
+        // derived from: https://www.thingiverse.com/thing:1187833
+        let mut moon =
+            std::fs::File::open("./fixtures/MOON_PRISM_POWER_no_closing_name.stl").unwrap();
         let mut buf = Vec::new();
-        frame_r.read_to_end(&mut buf).unwrap();
+        moon.read_to_end(&mut buf).unwrap();
         let mesh = indexed_mesh_ascii(&buf);
-        let end = std::time::Instant::now();
-        println!("frame_r time: {:?}", end - start);
-
-        assert!(mesh.is_ok());
-        let (remaining, _res) = mesh.unwrap();
+        let (remaining, result) = mesh.unwrap();
         assert_eq!(remaining, &[]);
+        assert_eq!(result.triangles.len(), 3698);
+    }
+
+    #[test]
+    fn parses_stl_with_dos_line_endings_crlf() {
+        // derived from: https://www.thingiverse.com/thing:1187833
+        let mut moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER_dos.stl").unwrap();
+        let mut buf = Vec::new();
+        moon.read_to_end(&mut buf).unwrap();
+        let embedded_res = indexed_mesh_ascii(&mut buf);
+        let (remaining, result) = embedded_res.unwrap();
+        assert!(remaining.is_empty());
+        assert_eq!(result.triangles.len(), 3698);
     }
 }
