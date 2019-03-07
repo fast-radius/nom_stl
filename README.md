@@ -1,6 +1,8 @@
 nom_stl
 =======
 
+[![CircleCI](https://circleci.com/gh/fast-radius/nom_stl/tree/master.svg?style=svg&circle-token=3f57317aeed67f5d7eb5a23c0c587bfd98f5bb0b)](https://circleci.com/gh/fast-radius/nom_stl/tree/master)
+
 # What is this
 
 `nom_stl` is a binary and ASCII STL parser, written in Rust, using the [nom](https://github.com/Geal/nom) parser combinator library.
