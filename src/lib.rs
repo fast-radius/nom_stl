@@ -178,6 +178,8 @@ fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quickcheck::*;
+    use quickcheck_macros::quickcheck;
     use std::io::prelude::*;
 
     #[test]
@@ -473,5 +475,24 @@ mod tests {
         let (remaining, result) = embedded_res.unwrap();
         assert!(remaining.is_empty());
         assert_eq!(result.triangles.len(), 3698);
+    }
+
+    #[quickcheck]
+    fn prop_parses_binary_stl_with_at_least_one_triangle() {
+        fn parses_binary_stl_with_at_least_one_triangle(xs: Vec<u8>) -> TestResult {
+            // 150 is the length of the 80 byte header plus 50 bytes for a single triangle
+            // this may result in partial parses,
+            // but this is a first pass at property testing.
+            // please remove this comment when this is a bit more robust.
+            if xs.len() < 150 {
+                return TestResult::discard();
+            }
+
+            TestResult::from_bool(indexed_mesh_binary(&xs).is_ok())
+        }
+
+        let mut qc = QuickCheck::new();
+        qc.quickcheck(parses_binary_stl_with_at_least_one_triangle as fn(Vec<u8>) -> TestResult);
+        qc.min_tests_passed(200);
     }
 }
