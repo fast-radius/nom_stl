@@ -84,6 +84,7 @@ This will also use Hashbrown (a faster hashtable library). Hashbrown is totally 
 - [ ] A solid public API
 - [ ] Better tests, with better input data rather than 0's for some of the smaller parsers
 - [x] Testing around parsing Windows/DOS line-ending files
+- [ ] Property testing (https://crates.io/crates/quickcheck)
 - [ ] Real documentation/rustdoc
 - [ ] A license
 - [ ] A home
