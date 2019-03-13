@@ -293,19 +293,35 @@ mod tests {
 
     #[test]
     fn parses_triangles() {
+        let normal = [1.0f32, 7.0f32, 3.0f32];
+        let v1 = [0f32, 22.100001f32, 4.1f32];
+        let v2 = [1.1f32, 9.10f32, 3.9f32];
+        let v3 = [2.0f32, 1.01f32, -5.2f32];
+
+        let normal_bytes: [u8; 12] = unsafe { std::mem::transmute(normal) };
+        let v1_bytes: [u8; 12] = unsafe { std::mem::transmute(v1) };
+        let v2_bytes: [u8; 12] = unsafe { std::mem::transmute(v2) };
+        let v3_bytes: [u8; 12] = unsafe { std::mem::transmute(v3) };
+
+        // a 2-byte short that's ignored
+        let attribute_byte_count_bytes: &[u8] = &[0, 0];
+
+        let triangle_bytes = &[
+            &normal_bytes,
+            &v1_bytes,
+            &v2_bytes,
+            &v3_bytes,
+            attribute_byte_count_bytes,
+        ]
+        .concat();
+
         assert_eq!(
-            triangle_binary(&[
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // normal
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // v1
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // v2
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // v3
-                0, 0 // uint16
-            ]),
+            triangle_binary(triangle_bytes),
             Ok((
                 vec!().as_slice(),
                 Triangle {
-                    normal: [0.0, 0.0, 0.0],
-                    vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+                    normal: normal,
+                    vertices: [v1, v2, v3]
                 }
             ))
         );
