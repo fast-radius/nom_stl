@@ -178,8 +178,6 @@ fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quickcheck::*;
-    use quickcheck_macros::quickcheck;
     use std::io::prelude::*;
 
     #[test]
@@ -476,6 +474,13 @@ mod tests {
         assert!(remaining.is_empty());
         assert_eq!(result.triangles.len(), 3698);
     }
+}
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use quickcheck::*;
+    use quickcheck_macros::quickcheck;
 
     #[quickcheck]
     fn prop_parses_binary_stl_with_at_least_one_triangle() {
