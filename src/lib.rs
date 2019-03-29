@@ -1,6 +1,4 @@
-use lazy_static::lazy_static;
 use nom::*;
-use regex::bytes::Regex;
 
 #[cfg(feature = "hashbrown")]
 use hashbrown::HashMap;
@@ -58,11 +56,25 @@ pub fn parse_stl(bytes: &[u8]) -> std::result::Result<(&[u8], IndexedMesh), nom:
 }
 
 fn contains_facet_normal_bytes(bytes: &[u8]) -> bool {
-    lazy_static! {
-        static ref FACET_NORMAL_REGEX: Regex = Regex::new(r"facet normal").unwrap();
-    }
+    let mut identifier_search_bytes_length =
+        match std::env::var("NOM_IDENTIFIER_SEARCH_BYTES_LENGTH") {
+            Ok(length) => length.parse().unwrap_or_else(|_| 1024),
+            Err(_e) => 1024,
+        };
 
-    FACET_NORMAL_REGEX.is_match(&bytes)
+    identifier_search_bytes_length = if bytes.len() <= identifier_search_bytes_length {
+        bytes.len()
+    } else {
+        identifier_search_bytes_length
+    };
+
+    search_bytes(&bytes[..identifier_search_bytes_length], b"facet normal").is_some()
+}
+
+fn search_bytes(bytes: &[u8], target: &[u8]) -> Option<usize> {
+    bytes
+        .windows(target.len())
+        .position(|window| window == target)
 }
 
 // BINARY GRAMMAR
