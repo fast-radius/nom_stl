@@ -37,23 +37,59 @@ pub struct IndexedMesh {
 // BOTH GRAMMARS
 /////////////////////////////////////////////////////////////////
 
-named!(
-    pub parse_stl<IndexedMesh>,
-    alt!(indexed_mesh_ascii | indexed_mesh_binary)
-);
+/// Parse a binary or an ASCII stl.
+/// Binary stls ar not supposed to begin with the bytes `solid`,
+/// but unfortunately they sometimes do in the real world.
+/// For this reason, we use a simple regex heuristic to determine
+/// if the stl contains the bytes `facet normal`, which is a byte
+/// sequence specifically used in ASCII stls.
+/// If the file contains this sequence, we assume ASCII, otherwise
+/// binary. While a binary stl can in theory contain this sequence,
+/// the odds of this are low. This is a tradeoff to avoid something
+/// both more complicated and less performant.
+pub fn parse_stl(bytes: &[u8]) -> std::result::Result<(&[u8], IndexedMesh), nom::Err<&[u8]>> {
+    if contains_facet_normal_bytes(&bytes) {
+        indexed_mesh_ascii(bytes)
+    } else {
+        indexed_mesh_binary(bytes)
+    }
+}
+
+fn contains_facet_normal_bytes(bytes: &[u8]) -> bool {
+    let mut identifier_search_bytes_length =
+        match std::env::var("NOM_IDENTIFIER_SEARCH_BYTES_LENGTH") {
+            Ok(length) => length.parse().unwrap_or_else(|_| 1024),
+            Err(_e) => 1024,
+        };
+
+    identifier_search_bytes_length = if bytes.len() <= identifier_search_bytes_length {
+        bytes.len()
+    } else {
+        identifier_search_bytes_length
+    };
+
+    search_bytes(&bytes[..identifier_search_bytes_length], b"facet normal").is_some()
+}
+
+fn search_bytes(bytes: &[u8], target: &[u8]) -> Option<usize> {
+    bytes
+        .windows(target.len())
+        .position(|window| window == target)
+}
 
 // BINARY GRAMMAR
 /////////////////////////////////////////////////////////////////
 
 named!(
-    pub indexed_mesh_binary<IndexedMesh>,
-    do_parse!(
-        not!(tag!("solid")) >>
-            _header: take!(80)
+    indexed_mesh_binary<IndexedMesh>,
+    complete!(do_parse!(
+        // we do not check for `solid` here,
+        // instead checking in `parse_stl`
+        take!(80)
             >> reported_count: le_u32
             >> triangles: many1!(complete!(triangle_binary))
             >> (build_indexed_mesh(&triangles, reported_count))
-    )
+    ))
 );
 
 named!(
@@ -93,7 +129,7 @@ named!(
 /////////////////////////////////////////////////////////////////
 
 named!(
-    pub indexed_mesh_ascii<IndexedMesh>,
+    indexed_mesh_ascii<IndexedMesh>,
     do_parse!(
         tag!("solid ")
             >> many1!(not_line_ending)
@@ -248,7 +284,7 @@ mod tests {
                endfacet
              endsolid OpenSCAD_Model";
 
-        let indexed_mesh = indexed_mesh_ascii(mesh_string.as_bytes());
+        let indexed_mesh = parse_stl(mesh_string.as_bytes());
 
         assert_eq!(
             indexed_mesh,
@@ -286,9 +322,10 @@ mod tests {
         let mut moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
         let mut buf = Vec::new();
         moon.read_to_end(&mut buf).unwrap();
-        let mesh = indexed_mesh_ascii(&buf);
+        let mesh = parse_stl(&buf);
 
         assert!(&mesh.is_ok());
+        assert_eq!(&mesh.unwrap().0, b"")
     }
 
     #[test]
@@ -414,40 +451,30 @@ mod tests {
     }
 
     #[test]
-    fn binary_does_not_parse_ascii() {
-        // this file is an ascii stl
-        // credit: https://www.thingiverse.com/thing:1187833
-        let mut moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
-        let mut buf = Vec::new();
-        moon.read_to_end(&mut buf).unwrap();
-        let mesh = indexed_mesh_binary(&buf);
-
-        assert!(mesh.is_err())
-    }
-
-    #[test]
-    fn ascii_does_not_parse_binary() {
-        // credit: https://www.thingiverse.com/thing:26227
-        let mut root_vase = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
-        let mut buf = Vec::new();
-        root_vase.read_to_end(&mut buf).unwrap();
-        let mesh = indexed_mesh_ascii(&buf);
-
-        assert!(mesh.is_err());
-    }
-
-    #[test]
     fn does_binary_from_file() {
         // credit: https://www.thingiverse.com/thing:26227
         let mut root_vase = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
         let start = std::time::Instant::now();
         let mut buf = Vec::new();
         root_vase.read_to_end(&mut buf).unwrap();
-        let mesh = indexed_mesh_binary(&buf);
+        let mesh = parse_stl(&buf);
         let end = std::time::Instant::now();
         println!("root_vase time: {:?}", end - start);
 
         assert!(mesh.is_ok());
+        assert_eq!(mesh.unwrap().0, b"")
+    }
+
+    #[test]
+    fn does_binary_from_file_starting_with_solid() {
+        // credit: https://www.thingiverse.com/thing:26227
+        let mut root_vase = std::fs::File::open("./fixtures/Root_Vase_solid_start.stl").unwrap();
+        let mut buf = Vec::new();
+        root_vase.read_to_end(&mut buf).unwrap();
+        let mesh = parse_stl(&buf);
+
+        assert!(mesh.is_ok());
+        assert_eq!(mesh.unwrap().0, b"")
     }
 
     #[test]
@@ -457,7 +484,7 @@ mod tests {
             std::fs::File::open("./fixtures/MOON_PRISM_POWER_no_closing_name.stl").unwrap();
         let mut buf = Vec::new();
         moon.read_to_end(&mut buf).unwrap();
-        let mesh = indexed_mesh_ascii(&buf);
+        let mesh = parse_stl(&buf);
         let (remaining, result) = mesh.unwrap();
         assert_eq!(remaining, &[]);
         assert_eq!(result.triangles.len(), 3698);
@@ -469,7 +496,7 @@ mod tests {
         let mut moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER_dos.stl").unwrap();
         let mut buf = Vec::new();
         moon.read_to_end(&mut buf).unwrap();
-        let embedded_res = indexed_mesh_ascii(&mut buf);
+        let embedded_res = parse_stl(&mut buf);
         let (remaining, result) = embedded_res.unwrap();
         assert!(remaining.is_empty());
         assert_eq!(result.triangles.len(), 3698);
@@ -493,7 +520,7 @@ mod properties {
                 return TestResult::discard();
             }
 
-            TestResult::from_bool(indexed_mesh_binary(&xs).is_ok())
+            TestResult::from_bool(parse_stl(&xs).is_ok())
         }
 
         let mut qc = QuickCheck::new();
