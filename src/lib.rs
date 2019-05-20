@@ -112,7 +112,7 @@ named!(
 
 named!(
     three_f32s<[f32; 3]>,
-    do_parse!(floats: count!(le_f32, 3) >> ([floats[0], floats[1], floats[2]]))
+    do_parse!(f1: le_f32 >> f2: le_f32 >> f3: le_f32 >> ([f1, f2, f3]))
 );
 
 named!(
@@ -133,11 +133,15 @@ named!(
 // ASCII GRAMMAR
 /////////////////////////////////////////////////////////////////
 
+fn not_line_ending(c: u8) -> bool {
+    c != b'\r' && c != b'\n'
+}
+
 named!(
     indexed_mesh_ascii<IndexedMesh>,
     do_parse!(
         tag!("solid ")
-            >> is_not!("\r\n")
+            >> take_while1!(not_line_ending)
             >> line_ending
             >> triangles: many1!(triangle_ascii)
             >> tag!("endsolid")
@@ -148,7 +152,7 @@ named!(
 
 named!(
     three_floats<[f32; 3]>,
-    do_parse!(floats: count!(ws!(float), 3) >> ([floats[0], floats[1], floats[2]]))
+    do_parse!(f1: ws!(float) >> f2: ws!(float) >> f3: ws!(float) >> ([f1, f2, f3]))
 );
 
 named!(vertex, ws!(tag!("vertex")));
