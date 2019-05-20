@@ -1,3 +1,6 @@
+use nom::character::complete::*;
+use nom::combinator::rest;
+use nom::number::streaming::*;
 use nom::*;
 
 #[cfg(feature = "hashbrown")]
@@ -37,6 +40,8 @@ pub struct IndexedMesh {
 // BOTH GRAMMARS
 /////////////////////////////////////////////////////////////////
 
+type ParseResult<T> = std::result::Result<(T, IndexedMesh), nom::Err<(T, nom::error::ErrorKind)>>;
+
 /// Parse a binary or an ASCII stl.
 /// Binary stls ar not supposed to begin with the bytes `solid`,
 /// but unfortunately they sometimes do in the real world.
@@ -47,7 +52,7 @@ pub struct IndexedMesh {
 /// binary. While a binary stl can in theory contain this sequence,
 /// the odds of this are low. This is a tradeoff to avoid something
 /// both more complicated and less performant.
-pub fn parse_stl(bytes: &[u8]) -> std::result::Result<(&[u8], IndexedMesh), nom::Err<&[u8]>> {
+pub fn parse_stl(bytes: &[u8]) -> ParseResult<&[u8]> {
     if contains_facet_normal_bytes(&bytes) {
         indexed_mesh_ascii(bytes)
     } else {
@@ -107,7 +112,7 @@ named!(
 
 named!(
     three_f32s<[f32; 3]>,
-    do_parse!(floats: count_fixed!(f32, le_f32, 3) >> (floats))
+    do_parse!(floats: count!(le_f32, 3) >> ([floats[0], floats[1], floats[2]]))
 );
 
 named!(
@@ -132,7 +137,7 @@ named!(
     indexed_mesh_ascii<IndexedMesh>,
     do_parse!(
         tag!("solid ")
-            >> many1!(not_line_ending)
+            >> is_not!("\r\n")
             >> line_ending
             >> triangles: many1!(triangle_ascii)
             >> tag!("endsolid")
@@ -143,8 +148,9 @@ named!(
 
 named!(
     three_floats<[f32; 3]>,
-    do_parse!(floats: count_fixed!(f32, ws!(float), 3) >> (floats))
+    do_parse!(floats: count!(ws!(float), 3) >> ([floats[0], floats[1], floats[2]]))
 );
+
 named!(vertex, ws!(tag!("vertex")));
 
 named!(
@@ -160,7 +166,7 @@ named!(
             >> vertex
             >> v3: ws!(three_floats)
             >> ws!(tag!("endloop"))
-            >> alt_complete!(ws!(tag!("endfacet")) | tag!("endfacet"))
+            >> alt!(ws!(tag!("endfacet")) | tag!("endfacet"))
             >> (Triangle {
                 normal: normal,
                 vertices: [v1, v2, v3]
