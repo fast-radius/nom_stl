@@ -9,7 +9,7 @@ default = []
 
 [dependencies]
 hashbrown = { version = "0.5", optional = true }
-nom = "5.0.0-beta1"
+nom = "5.0"
 
 [dev-dependencies]
 quickcheck = "0.8"
