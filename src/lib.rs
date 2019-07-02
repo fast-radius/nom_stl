@@ -225,7 +225,6 @@ fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMes
 mod tests {
     use super::*;
     use memmap::MmapOptions;
-    use std::io::prelude::*;
 
     #[test]
     fn parses_both_ascii_and_binary() {
