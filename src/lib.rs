@@ -224,25 +224,21 @@ fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::prelude::*;
+    use memmap::MmapOptions;
 
     #[test]
     fn parses_both_ascii_and_binary() {
         // derived from: https://www.thingiverse.com/thing:1187833
-        let mut moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
-
-        let mut buf = Vec::new();
-        moon.read_to_end(&mut buf).unwrap();
-        let ascii_mesh = parse_stl(&buf);
+        let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
+        let moon = unsafe { MmapOptions::new().map(&moon_file).unwrap() };
+        let ascii_mesh = parse_stl(&moon);
 
         assert!(&ascii_mesh.is_ok());
 
         // credit: https://www.thingiverse.com/thing:26227
-        let mut root_vase = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
-
-        let mut buf2 = Vec::new();
-        root_vase.read_to_end(&mut buf2).unwrap();
-        let binary_mesh = parse_stl(&buf2);
+        let vase_file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
+        let root_vase = unsafe { MmapOptions::new().map(&vase_file).unwrap() };
+        let binary_mesh = parse_stl(&root_vase);
 
         assert!(binary_mesh.is_ok());
     }
@@ -329,10 +325,9 @@ mod tests {
     #[test]
     fn does_ascii_from_file() {
         // derived from: https://www.thingiverse.com/thing:1187833
-        let mut moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
-        let mut buf = Vec::new();
-        moon.read_to_end(&mut buf).unwrap();
-        let mesh = parse_stl(&buf);
+        let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
+        let moon = unsafe { MmapOptions::new().map(&moon_file).unwrap() };
+        let mesh = parse_stl(&moon);
 
         assert!(&mesh.is_ok());
         assert_eq!(&mesh.unwrap().0, b"")
@@ -463,11 +458,10 @@ mod tests {
     #[test]
     fn does_binary_from_file() {
         // credit: https://www.thingiverse.com/thing:26227
-        let mut root_vase = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
+        let file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
+        let root_vase = unsafe { MmapOptions::new().map(&file).unwrap() };
         let start = std::time::Instant::now();
-        let mut buf = Vec::new();
-        root_vase.read_to_end(&mut buf).unwrap();
-        let mesh = parse_stl(&buf);
+        let mesh = parse_stl(&root_vase);
         let end = std::time::Instant::now();
         println!("root_vase time: {:?}", end - start);
 
@@ -478,10 +472,9 @@ mod tests {
     #[test]
     fn does_binary_from_file_starting_with_solid() {
         // credit: https://www.thingiverse.com/thing:26227
-        let mut root_vase = std::fs::File::open("./fixtures/Root_Vase_solid_start.stl").unwrap();
-        let mut buf = Vec::new();
-        root_vase.read_to_end(&mut buf).unwrap();
-        let mesh = parse_stl(&buf);
+        let file = std::fs::File::open("./fixtures/Root_Vase_solid_start.stl").unwrap();
+        let root_vase = unsafe { MmapOptions::new().map(&file).unwrap() };
+        let mesh = parse_stl(&root_vase);
 
         assert!(mesh.is_ok());
         assert_eq!(mesh.unwrap().0, b"")
@@ -490,11 +483,10 @@ mod tests {
     #[test]
     fn does_ascii_file_without_a_closing_solid_name() {
         // derived from: https://www.thingiverse.com/thing:1187833
-        let mut moon =
+        let moon_file =
             std::fs::File::open("./fixtures/MOON_PRISM_POWER_no_closing_name.stl").unwrap();
-        let mut buf = Vec::new();
-        moon.read_to_end(&mut buf).unwrap();
-        let mesh = parse_stl(&buf);
+        let moon = unsafe { MmapOptions::new().map(&moon_file).unwrap() };
+        let mesh = parse_stl(&moon);
         let (remaining, result) = mesh.unwrap();
         assert_eq!(remaining, &[]);
         assert_eq!(result.triangles.len(), 3698);
@@ -503,10 +495,10 @@ mod tests {
     #[test]
     fn parses_stl_with_dos_line_endings_crlf() {
         // derived from: https://www.thingiverse.com/thing:1187833
-        let mut moon = std::fs::File::open("./fixtures/MOON_PRISM_POWER_dos.stl").unwrap();
-        let mut buf = Vec::new();
-        moon.read_to_end(&mut buf).unwrap();
-        let embedded_res = parse_stl(&mut buf);
+
+        let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER_dos.stl").unwrap();
+        let moon = unsafe { MmapOptions::new().map(&moon_file).unwrap() };
+        let embedded_res = parse_stl(&moon);
         let (remaining, result) = embedded_res.unwrap();
         assert!(remaining.is_empty());
         assert_eq!(result.triangles.len(), 3698);
