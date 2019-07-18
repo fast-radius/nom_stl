@@ -3,9 +3,9 @@ use nom::combinator::rest;
 use nom::number::streaming::*;
 use nom::*;
 
-#[cfg(feature = "hashbrown")]
-use hashbrown::HashMap;
-#[cfg(not(feature = "hashbrown"))]
+#[cfg(feature = "fx")]
+use rustc_hash::FxHashMap as HashMap;
+#[cfg(not(feature = "fx"))]
 use std::collections::HashMap;
 
 pub type Vertex = [f32; 3];
@@ -179,7 +179,11 @@ named!(
 );
 
 fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMesh {
+    #[cfg(feature = "fx")]
+    let mut indexes = HashMap::default();
+    #[cfg(not(feature = "fx"))]
     let mut indexes = HashMap::new();
+
     let mut vertices: Vec<Vertex> = Vec::new();
 
     let indexed_triangles: Vec<IndexedTriangle> = triangles
