@@ -28,3 +28,6 @@ jobs:
       - run:
           name: Test
           command: cargo test --all --release --features=fx
+      - run:
+          name: Benchmarks
+          command: cargo bench --features=fx || true
