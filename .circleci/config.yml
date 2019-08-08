@@ -30,11 +30,11 @@ jobs:
           command: cargo test --all --release --features=fx
       - restore_cache:
           keys:
-            - v1-bench-cache-{{ arch }}-{{ checksum "target/criterion/index.html" }}
+            - v1-bench-cache-{{ arch }}-{{ checksum "target/criterion/report/index.html" }}
       - run:
           name: Benchmarks
           command: cargo bench --features=fx || true
       - save_cache:
           paths:
             - target/criterion
-          key: v1-bench-cache-{{ arch }}-{{ checksum "target/criterion/index.html" }}
+          key: v1-bench-cache-{{ arch }}-{{ checksum "target/criterion/report/index.html" }}
