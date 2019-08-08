@@ -6,11 +6,11 @@ use memmap::MmapOptions;
 use nom_stl::parse_stl;
 
 fn parse_stl_binary(c: &mut Criterion) {
-    let vase_file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
-    let root_vase = unsafe { MmapOptions::new().map(&vase_file).unwrap() };
+    let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER_binary.stl").unwrap();
+    let moon = unsafe { MmapOptions::new().map(&moon_file).unwrap() };
 
-    c.bench_function("parse_stl_root_vase", move |b| {
-        b.iter(|| parse_stl(&root_vase))
+    c.bench_function("parse_stl_moon_prism_power_binary", move |b| {
+        b.iter(|| parse_stl(&moon))
     });
 }
 
