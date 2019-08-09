@@ -6,9 +6,8 @@ nom_stl
 # What is this
 
 `nom_stl` is a binary and ASCII STL parser, written in Rust, using the [nom](https://github.com/Geal/nom) parser combinator library.
-It parses a 30M binary STL in ~250ms.
-The [hashbrown](https://github.com/Amanieu/hashbrown) hashmap library is available behind the opt-in `hashbrown` feature flag,
-giving a free ~30% speedup, parsing the same file in ~180ms.
+It parses a 30M binary STL in <100ms.
+
 `nom_stl` attempts to be mostly API compatible with [stl_io](https://github.com/hmeyer/stl_io), but is a new implementation rather than a fork.
 
 # What does it look like
@@ -67,24 +66,29 @@ fn parses_ascii_indexed_mesh() {
 }
 ```
 
+# What doesn't it do
+- STL output, though this may change
+- Watertightness checks
+- Mesh repair
+- Dimensions/bounding box calculations
+
 # Running the tests faster
 
 To make the tests run faster (but increase build time), you can run the tests in `release` mode.
 To do this, run the following:
 
 ```
-cargo test --release --features=hashbrown -- --nocapture
+cargo test --release --features=fx -- --nocapture
 ```
-
-This will also use Hashbrown (a faster hashtable library). Hashbrown is totally optional, but will increase speed.
 
 
 # What does it need
 
 - [ ] A solid public API
-- [ ] Better tests, with better input data rather than 0's for some of the smaller parsers
+- [x] Better tests, with better input data rather than 0's for some of the smaller parsers
 - [x] Testing around parsing Windows/DOS line-ending files
-- [ ] Property testing (https://crates.io/crates/quickcheck)
+- [x] Property testing (https://crates.io/crates/quickcheck)
+- [x] Latest Nom (5.0)
 - [ ] Real documentation/rustdoc
 - [ ] A license
 - [ ] A home
