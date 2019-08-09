@@ -1,6 +1,14 @@
+use nom::bytes::complete::tag;
+use nom::bytes::complete::take;
+use nom::bytes::complete::take_while1;
+use nom::character::complete::multispace0;
 use nom::character::complete::*;
+use nom::combinator::complete;
+use nom::combinator::opt;
 use nom::combinator::rest;
-use nom::number::streaming::*;
+use nom::multi::many1;
+use nom::number::complete::{float, le_f32, le_u32};
+use nom::IResult;
 use nom::*;
 
 #[cfg(feature = "fx")]
@@ -85,50 +93,51 @@ fn search_bytes(bytes: &[u8], target: &[u8]) -> Option<usize> {
 // BINARY GRAMMAR
 /////////////////////////////////////////////////////////////////
 
-named!(
-    indexed_mesh_binary<IndexedMesh>,
-    complete!(do_parse!(
-        // we do not check for `solid` here,
-        // instead checking in `parse_stl`
-        take!(80)
-            >> reported_count: le_u32
-            >> triangles: many1!(complete!(triangle_binary))
-            >> (build_indexed_mesh(&triangles, reported_count))
+fn indexed_mesh_binary(s: &[u8]) -> IResult<&[u8], IndexedMesh> {
+    let (s, _) = take(80usize)(s)?;
+    let (s, reported_count) = le_u32(s)?;
+    let (s, triangles) = many1(complete(triangle_binary))(s)?;
+
+    Ok((s, build_indexed_mesh(&triangles, reported_count)))
+}
+
+pub fn mesh(s: &[u8]) -> IResult<&[u8], Mesh> {
+    let (s, _) = take(80usize)(s)?;
+    let (s, reported_count) = le_u32(s)?;
+    let (s, triangles) = many1(complete(triangle_binary))(s)?;
+
+    Ok((
+        s,
+        Mesh {
+            reported_count,
+            triangles,
+        },
     ))
-);
+}
 
-named!(
-    pub mesh<Mesh>,
-    do_parse!(
-        _header: take!(80)
-            >> reported_count: le_u32
-            >> triangles: many1!(complete!(triangle_binary))
-            >> (Mesh {
-                reported_count: reported_count,
-                triangles: triangles
-            })
-    )
-);
+fn three_f32s(s: &[u8]) -> IResult<&[u8], [f32; 3]> {
+    let (s, f1) = le_f32(s)?;
+    let (s, f2) = le_f32(s)?;
+    let (s, f3) = le_f32(s)?;
 
-named!(
-    three_f32s<[f32; 3]>,
-    do_parse!(f1: le_f32 >> f2: le_f32 >> f3: le_f32 >> ([f1, f2, f3]))
-);
+    Ok((s, [f1, f2, f3]))
+}
 
-named!(
-    triangle_binary<Triangle>,
-    do_parse!(
-        normal: three_f32s
-            >> v1: three_f32s
-            >> v2: three_f32s
-            >> v3: three_f32s
-            >> _attribute_byte_count: take!(2)
-            >> (Triangle {
-                normal: normal,
-                vertices: [v1, v2, v3]
-            })
-    )
-);
+fn triangle_binary(s: &[u8]) -> IResult<&[u8], Triangle> {
+    let (s, normal) = three_f32s(s)?;
+    let (s, v1) = three_f32s(s)?;
+    let (s, v2) = three_f32s(s)?;
+    let (s, v3) = three_f32s(s)?;
+    let (s, _attribute_byte_count) = take(2usize)(s)?;
+
+    Ok((
+        s,
+        Triangle {
+            normal,
+            vertices: [v1, v2, v3],
+        },
+    ))
+}
 
 // ASCII GRAMMAR
 /////////////////////////////////////////////////////////////////
@@ -137,46 +146,76 @@ fn not_line_ending(c: u8) -> bool {
     c != b'\r' && c != b'\n'
 }
 
-named!(
-    indexed_mesh_ascii<IndexedMesh>,
-    do_parse!(
-        tag!("solid ")
-            >> take_while1!(not_line_ending)
-            >> line_ending
-            >> triangles: many1!(triangle_ascii)
-            >> tag!("endsolid")
-            >> opt!(rest)
-            >> (build_indexed_mesh(&triangles, 0))
-    )
-);
+fn indexed_mesh_ascii(s: &[u8]) -> IResult<&[u8], IndexedMesh> {
+    let (s, _) = tag("solid ")(s)?;
+    let (s, _) = take_while1(not_line_ending)(s)?;
+    let (s, _) = line_ending(s)?;
+    let (s, triangles) = many1(triangle_ascii)(s)?;
 
-named!(
-    three_floats<[f32; 3]>,
-    do_parse!(f1: ws!(float) >> f2: ws!(float) >> f3: ws!(float) >> ([f1, f2, f3]))
-);
+    let (s, _) = multispace1(s)?;
 
-named!(vertex, ws!(tag!("vertex")));
+    let (s, _) = tag("endsolid")(s)?;
+    let (s, _) = opt(rest)(s)?;
 
-named!(
-    triangle_ascii<Triangle>,
-    do_parse!(
-        alt!(ws!(tag!("facet normal")) | tag!("facet normal"))
-            >> normal: ws!(three_floats)
-            >> ws!(tag!("outer loop"))
-            >> vertex
-            >> v1: ws!(three_floats)
-            >> vertex
-            >> v2: ws!(three_floats)
-            >> vertex
-            >> v3: ws!(three_floats)
-            >> ws!(tag!("endloop"))
-            >> alt!(ws!(tag!("endfacet")) | tag!("endfacet"))
-            >> (Triangle {
-                normal: normal,
-                vertices: [v1, v2, v3]
-            })
-    )
-);
+    Ok((s, build_indexed_mesh(&triangles, 0)))
+}
+
+named!(pub whitespace, eat_separator!(&b" \t\r\n"[..]));
+
+fn three_floats(s: &[u8]) -> IResult<&[u8], [f32; 3]> {
+    let (s, f1) = float(s)?;
+    let (s, _) = multispace1(s)?;
+    let (s, f2) = float(s)?;
+    let (s, _) = multispace1(s)?;
+    let (s, f3) = float(s)?;
+
+    Ok((s, [f1, f2, f3]))
+}
+
+fn vertex(s: &[u8]) -> IResult<&[u8], ()> {
+    let (s, _) = tag("vertex")(s)?;
+    Ok((s, ()))
+}
+
+fn triangle_ascii(s: &[u8]) -> IResult<&[u8], Triangle> {
+    let (s, _) = multispace0(s)?;
+    let (s, _) = tag("facet normal")(s)?;
+    let (s, _) = multispace1(s)?;
+
+    let (s, normal) = three_floats(s)?;
+    let (s, _) = multispace1(s)?;
+
+    let (s, _) = tag("outer loop")(s)?;
+    let (s, _) = multispace1(s)?;
+
+    let (s, _) = vertex(s)?;
+    let (s, _) = multispace1(s)?;
+    let (s, v1) = three_floats(s)?;
+    let (s, _) = multispace1(s)?;
+
+    let (s, _) = vertex(s)?;
+    let (s, _) = multispace1(s)?;
+    let (s, v2) = three_floats(s)?;
+    let (s, _) = multispace1(s)?;
+
+    let (s, _) = vertex(s)?;
+    let (s, _) = multispace1(s)?;
+    let (s, v3) = three_floats(s)?;
+    let (s, _) = multispace1(s)?;
+
+    let (s, _) = tag("endloop")(s)?;
+    let (s, _) = multispace1(s)?;
+
+    let (s, _) = tag("endfacet")(s)?;
+
+    Ok((
+        s,
+        Triangle {
+            normal,
+            vertices: [v1, v2, v3],
+        },
+    ))
+}
 
 fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMesh {
     #[cfg(feature = "fx")]
