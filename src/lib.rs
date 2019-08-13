@@ -1,3 +1,5 @@
+#[cfg(feature = "na")]
+use nalgebra::{Point3, Vector3};
 use nom::bytes::complete::tag;
 use nom::bytes::complete::take;
 use nom::bytes::complete::take_while1;
@@ -16,9 +18,19 @@ use rustc_hash::FxHashMap as HashMap;
 #[cfg(not(feature = "fx"))]
 use std::collections::HashMap;
 
+#[cfg(feature = "na")]
+pub type Vertex = Point3<f32>;
+#[cfg(not(feature = "na"))]
 pub type Vertex = [f32; 3];
 type Index = usize;
 
+#[cfg(feature = "na")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Triangle {
+    pub normal: Vector3<f32>,
+    pub vertices: [Point3<f32>; 3],
+}
+#[cfg(not(feature = "na"))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Triangle {
     pub normal: Vertex,
@@ -31,6 +43,13 @@ pub struct Mesh {
     pub triangles: Vec<Triangle>,
 }
 
+#[cfg(feature = "na")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IndexedTriangle {
+    pub normal: Vector3<f32>,
+    pub vertices: [Index; 3],
+}
+#[cfg(not(feature = "na"))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IndexedTriangle {
     pub normal: Vertex,
@@ -132,6 +151,16 @@ fn triangle_binary(s: &[u8]) -> IResult<&[u8], Triangle> {
 
     Ok((
         s,
+        #[cfg(feature = "na")]
+        Triangle {
+            normal: Vector3::new(normal[0], normal[1], normal[2]),
+            vertices: [
+                Point3::new(v1[0], v1[1], v1[2]),
+                Point3::new(v2[0], v2[1], v2[2]),
+                Point3::new(v3[0], v3[1], v3[2]),
+            ],
+        },
+        #[cfg(not(feature = "na"))]
         Triangle {
             normal,
             vertices: [v1, v2, v3],
@@ -210,6 +239,16 @@ fn triangle_ascii(s: &[u8]) -> IResult<&[u8], Triangle> {
 
     Ok((
         s,
+        #[cfg(feature = "na")]
+        Triangle {
+            normal: Vector3::new(normal[0], normal[1], normal[2]),
+            vertices: [
+                Point3::new(v1[0], v1[1], v1[2]),
+                Point3::new(v2[0], v2[1], v2[2]),
+                Point3::new(v3[0], v3[1], v3[2]),
+            ],
+        },
+        #[cfg(not(feature = "na"))]
         Triangle {
             normal,
             vertices: [v1, v2, v3],
@@ -235,6 +274,11 @@ fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMes
                 .iter()
                 .enumerate()
                 .for_each(|(i, vertex)| {
+                    #[cfg(feature = "na")]
+                    let vertex_as_u32_bits = unsafe {
+                        std::mem::transmute::<[f32; 3], [u32; 3]>([vertex.x, vertex.y, vertex.z])
+                    };
+                    #[cfg(not(feature = "na"))]
                     let vertex_as_u32_bits =
                         unsafe { std::mem::transmute::<[f32; 3], [u32; 3]>(*vertex) };
 
@@ -297,21 +341,26 @@ mod tests {
              endfacet";
 
         let triangle = triangle_ascii(triangle_string.as_bytes());
+        #[cfg(feature = "na")]
+        let test_triangle = Triangle {
+            normal: Vector3::new(0.642777, -0.00000254044, 0.766053),
+            vertices: [
+                Point3::new(8.08661, 0.373289, 54.1924),
+                Point3::new(8.02181, 0.689748, 54.2468),
+                Point3::new(8.10936, 0.0, 54.1733),
+            ],
+        };
+        #[cfg(not(feature = "na"))]
+        let test_triangle = Triangle {
+            normal: [0.642777, -0.00000254044, 0.766053],
+            vertices: [
+                [8.08661, 0.373289, 54.1924],
+                [8.02181, 0.689748, 54.2468],
+                [8.10936, 0.0, 54.1733],
+            ],
+        };
 
-        assert_eq!(
-            triangle,
-            Ok((
-                vec!().as_slice(),
-                Triangle {
-                    normal: [0.642777, -0.00000254044, 0.766053],
-                    vertices: [
-                        [8.08661, 0.373289, 54.1924],
-                        [8.02181, 0.689748, 54.2468],
-                        [8.10936, 0.0, 54.1733]
-                    ]
-                }
-            ))
-        )
+        assert_eq!(triangle, Ok((vec!().as_slice(), test_triangle)))
     }
 
     #[test]
@@ -335,34 +384,55 @@ mod tests {
 
         let indexed_mesh = parse_stl(mesh_string.as_bytes());
 
-        assert_eq!(
-            indexed_mesh,
-            Ok((
-                vec!().as_slice(),
-                IndexedMesh {
-                    reported_triangles_count: 0,
-                    actual_triangles_count: 2,
-                    vertices: vec!(
-                        [8.08661, 0.373289, 54.1924],
-                        [8.02181, 0.689748, 54.2468],
-                        [8.10936, 0.0, 54.1733],
-                        [-0.196076, 7.34845, 8.72767],
-                        [0.0, 8.11983, 7.87508],
-                        [0.0, 7.342, 8.6529]
-                    ),
-                    triangles: vec!(
-                        IndexedTriangle {
-                            normal: [0.642777, -0.00000254044, 0.766053],
-                            vertices: [0, 1, 2]
-                        },
-                        IndexedTriangle {
-                            normal: [-0.281083, -0.678599, -0.678599],
-                            vertices: [3, 4, 5]
-                        }
-                    )
-                }
-            ))
-        )
+        let test_mesh = IndexedMesh {
+            reported_triangles_count: 0,
+            actual_triangles_count: 2,
+
+            #[cfg(feature = "na")]
+            vertices: vec![
+                Point3::new(8.08661, 0.373289, 54.1924),
+                Point3::new(8.02181, 0.689748, 54.2468),
+                Point3::new(8.10936, 0.0, 54.1733),
+                Point3::new(-0.196076, 7.34845, 8.72767),
+                Point3::new(0.0, 8.11983, 7.87508),
+                Point3::new(0.0, 7.342, 8.6529),
+            ],
+
+            #[cfg(not(feature = "na"))]
+            vertices: vec![
+                [8.08661, 0.373289, 54.1924],
+                [8.02181, 0.689748, 54.2468],
+                [8.10936, 0.0, 54.1733],
+                [-0.196076, 7.34845, 8.72767],
+                [0.0, 8.11983, 7.87508],
+                [0.0, 7.342, 8.6529],
+            ],
+
+            triangles: vec![
+                #[cfg(feature = "na")]
+                IndexedTriangle {
+                    normal: Vector3::new(0.642777, -0.00000254044, 0.766053),
+                    vertices: [0, 1, 2],
+                },
+                #[cfg(feature = "na")]
+                IndexedTriangle {
+                    normal: Vector3::new(-0.281083, -0.678599, -0.678599),
+                    vertices: [3, 4, 5],
+                },
+                #[cfg(not(feature = "na"))]
+                IndexedTriangle {
+                    normal: [0.642777, -0.00000254044, 0.766053],
+                    vertices: [0, 1, 2],
+                },
+                #[cfg(not(feature = "na"))]
+                IndexedTriangle {
+                    normal: [-0.281083, -0.678599, -0.678599],
+                    vertices: [3, 4, 5],
+                },
+            ],
+        };
+
+        assert_eq!(indexed_mesh, Ok((vec!().as_slice(), test_mesh)))
     }
 
     #[test]
@@ -399,16 +469,24 @@ mod tests {
             attribute_byte_count_bytes,
         ]
         .concat();
+        #[cfg(feature = "na")]
+        let test_triangle = Triangle {
+            normal: Vector3::new(normal[0], normal[1], normal[2]),
+            vertices: [
+                Point3::new(v1[0], v1[1], v1[2]),
+                Point3::new(v2[0], v2[1], v2[2]),
+                Point3::new(v3[0], v3[1], v3[2]),
+            ],
+        };
+        #[cfg(not(feature = "na"))]
+        let test_triangle = Triangle {
+            normal: normal,
+            vertices: [v1, v2, v3],
+        };
 
         assert_eq!(
             triangle_binary(triangle_bytes),
-            Ok((
-                vec!().as_slice(),
-                Triangle {
-                    normal: normal,
-                    vertices: [v1, v2, v3]
-                }
-            ))
+            Ok((vec!().as_slice(), test_triangle))
         );
     }
 
@@ -440,10 +518,30 @@ mod tests {
                 Mesh {
                     reported_count: 0,
                     triangles: vec!(
+                        #[cfg(feature = "na")]
+                        Triangle {
+                            normal: Vector3::new(0.0, 0.0, 0.0),
+                            vertices: [
+                                Point3::new(0.0, 0.0, 0.0),
+                                Point3::new(0.0, 0.0, 0.0),
+                                Point3::new(0.0, 0.0, 0.0)
+                            ]
+                        },
+                        #[cfg(feature = "na")]
+                        Triangle {
+                            normal: Vector3::new(0.0, 0.0, 0.0),
+                            vertices: [
+                                Point3::new(0.0, 0.0, 0.0),
+                                Point3::new(0.0, 0.0, 0.0),
+                                Point3::new(0.0, 0.0, 0.0)
+                            ]
+                        },
+                        #[cfg(not(feature = "na"))]
                         Triangle {
                             normal: [0.0, 0.0, 0.0],
                             vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
                         },
+                        #[cfg(not(feature = "na"))]
                         Triangle {
                             normal: [0.0, 0.0, 0.0],
                             vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
@@ -483,16 +581,31 @@ mod tests {
                     reported_triangles_count: 0,
                     actual_triangles_count: 2,
                     triangles: vec!(
+                        #[cfg(feature = "na")]
+                        IndexedTriangle {
+                            normal: Vector3::new(0.0, 0.0, 0.0),
+                            vertices: [0, 0, 0]
+                        },
+                        #[cfg(feature = "na")]
+                        IndexedTriangle {
+                            normal: Vector3::new(0.0, 0.0, 0.0),
+                            vertices: [0, 0, 0]
+                        },
+                        #[cfg(not(feature = "na"))]
                         IndexedTriangle {
                             normal: [0.0, 0.0, 0.0],
                             vertices: [0, 0, 0]
                         },
+                        #[cfg(not(feature = "na"))]
                         IndexedTriangle {
                             normal: [0.0, 0.0, 0.0],
                             vertices: [0, 0, 0]
                         },
                     ),
-                    vertices: vec!([0.0, 0.0, 0.0])
+                    #[cfg(feature = "na")]
+                    vertices: vec!(Point3::new(0.0, 0.0, 0.0)),
+                    #[cfg(not(feature = "na"))]
+                    vertices: vec!([0.0, 0.0, 0.0]),
                 }
             ))
         );
