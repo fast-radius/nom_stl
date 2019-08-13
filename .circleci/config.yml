@@ -34,3 +34,6 @@ jobs:
       - run:
           name: Benchmarks
           command: cargo bench --features=fx || true
+      - run:
+          name: Benchmarks Nalgebra
+          command: cargo bench --features=fx,na || true
