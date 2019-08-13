@@ -29,5 +29,8 @@ jobs:
           name: Test
           command: cargo test --all --release --features=fx
       - run:
+          name: Test Nalgebra
+          command: cargo test --all --release --features=fx,na
+      - run:
           name: Benchmarks
           command: cargo bench --features=fx || true
