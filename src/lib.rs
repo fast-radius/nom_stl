@@ -155,9 +155,9 @@ fn triangle_binary(s: &[u8]) -> IResult<&[u8], Triangle> {
         Triangle {
             normal: Vector3::new(normal[0], normal[1], normal[2]),
             vertices: [
-                Point3::new(v1[0], v1[1], v1[2]),
-                Point3::new(v2[0], v2[1], v2[2]),
-                Point3::new(v3[0], v3[1], v3[2]),
+                Point3::from_slice(&v1),
+                Point3::from_slice(&v2),
+                Point3::from_slice(&v3),
             ],
         },
         #[cfg(not(feature = "na"))]
@@ -243,9 +243,9 @@ fn triangle_ascii(s: &[u8]) -> IResult<&[u8], Triangle> {
         Triangle {
             normal: Vector3::new(normal[0], normal[1], normal[2]),
             vertices: [
-                Point3::new(v1[0], v1[1], v1[2]),
-                Point3::new(v2[0], v2[1], v2[2]),
-                Point3::new(v3[0], v3[1], v3[2]),
+                Point3::from_slice(&v1),
+                Point3::from_slice(&v2),
+                Point3::from_slice(&v3),
             ],
         },
         #[cfg(not(feature = "na"))]
@@ -473,14 +473,14 @@ mod tests {
         let test_triangle = Triangle {
             normal: Vector3::new(normal[0], normal[1], normal[2]),
             vertices: [
-                Point3::new(v1[0], v1[1], v1[2]),
-                Point3::new(v2[0], v2[1], v2[2]),
-                Point3::new(v3[0], v3[1], v3[2]),
+                Point3::from_slice(&v1),
+                Point3::from_slice(&v2),
+                Point3::from_slice(&v3),
             ],
         };
         #[cfg(not(feature = "na"))]
         let test_triangle = Triangle {
-            normal: normal,
+            normal,
             vertices: [v1, v2, v3],
         };
 
