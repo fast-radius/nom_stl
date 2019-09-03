@@ -66,6 +66,18 @@ fn parses_ascii_indexed_mesh() {
 }
 ```
 
+# Optional Nalgebra Integration
+
+Nalgebra integration is available behind an opt-in feature flag, `na`.
+Add `nom_stl` to your `Cargo.toml` like this to enable Nalgebra types instead of standard library types:
+
+```
+nom_stl = { git = "ssh://git@github.com/fast-radius/nom_stl", rev = "A GIT REVISION", features = ["na"] }
+```
+
+With the `na` flag, triangle vertexes are `nalgebra::Point3<f32>` instead of `[f32; 3]`,
+and triangle normals are `nalgebra::Vector3<f32>` instead of `[f32; 3]`.
+
 # What doesn't it do
 - STL output, though this may change
 - Watertightness checks
@@ -89,6 +101,7 @@ cargo test --release --features=fx -- --nocapture
 - [x] Testing around parsing Windows/DOS line-ending files
 - [x] Property testing (https://crates.io/crates/quickcheck)
 - [x] Latest Nom (5.0)
+- [x] Optional [Nalgebra](https://www.nalgebra.org/) integration
 - [ ] Real documentation/rustdoc
 - [ ] A license
 - [ ] A home
