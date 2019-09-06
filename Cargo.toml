@@ -15,7 +15,7 @@ rustc-hash = { version = "1.0", optional = true }
 nalgebra = { version = "0.18", optional = true }
 
 [dev-dependencies]
-criterion = "0.2"
+criterion = "0.3"
 memmap = "0.7"
 quickcheck = "0.9"
 quickcheck_macros = "0.8"
