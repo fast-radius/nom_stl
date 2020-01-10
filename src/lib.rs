@@ -67,8 +67,6 @@ pub struct IndexedMesh {
 // BOTH GRAMMARS
 /////////////////////////////////////////////////////////////////
 
-type ParseResult<T> = std::result::Result<(T, IndexedMesh), nom::Err<(T, nom::error::ErrorKind)>>;
-
 /// Parse a binary or an ASCII stl.
 /// Binary stls ar not supposed to begin with the bytes `solid`,
 /// but unfortunately they sometimes do in the real world.
@@ -79,8 +77,8 @@ type ParseResult<T> = std::result::Result<(T, IndexedMesh), nom::Err<(T, nom::er
 /// binary. While a binary stl can in theory contain this sequence,
 /// the odds of this are low. This is a tradeoff to avoid something
 /// both more complicated and less performant.
-pub fn parse_stl(bytes: &[u8]) -> ParseResult<&[u8]> {
-    if contains_facet_normal_bytes(&bytes) {
+pub fn parse_stl(bytes: &[u8]) -> IResult<&[u8], IndexedMesh> {
+    if contains_facet_normal_bytes(bytes) {
         indexed_mesh_ascii(bytes)
     } else {
         indexed_mesh_binary(bytes)
