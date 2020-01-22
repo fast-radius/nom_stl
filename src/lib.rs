@@ -64,6 +64,29 @@ pub struct IndexedMesh {
     pub triangles: Vec<IndexedTriangle>,
 }
 
+impl From<IndexedMesh> for Mesh {
+    fn from(indexed_mesh: IndexedMesh) -> Self {
+        let mut triangles = Vec::with_capacity(indexed_mesh.actual_triangles_count);
+        for indexed_triangle in indexed_mesh.triangles {
+            let triangle = Triangle {
+                normal: indexed_triangle.normal,
+                vertices: [
+                    indexed_mesh.vertices[indexed_triangle.vertices[0]],
+                    indexed_mesh.vertices[indexed_triangle.vertices[1]],
+                    indexed_mesh.vertices[indexed_triangle.vertices[2]],
+                ],
+            };
+
+            triangles.push(triangle)
+        }
+
+        Self {
+            reported_count: indexed_mesh.reported_triangles_count,
+            triangles,
+        }
+    }
+}
+
 // BOTH GRAMMARS
 /////////////////////////////////////////////////////////////////
 
