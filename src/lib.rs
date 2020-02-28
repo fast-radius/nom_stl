@@ -306,7 +306,7 @@ fn indexed_mesh_ascii<'a>(s: &'a [u8]) -> Result<(Vec<u8>, IndexedMesh)> {
         Err(e) => return Err(Box::new(e.to_owned())),
     };
 
-    let res: BytesSliceResult<'a> = take_while1(not_line_ending)(s);
+    let res: IResult<&'a [u8], Option<&[u8]>> = opt(take_while1(not_line_ending))(s);
 
     let (s, _): (&'a [u8], ()) = match res {
         Ok((s, _)) => (s, ()),
