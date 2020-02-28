@@ -39,7 +39,6 @@ pub struct Triangle {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mesh {
-    pub reported_count: u32,
     pub triangles: Vec<Triangle>,
 }
 
@@ -58,14 +57,13 @@ pub struct IndexedTriangle {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexedMesh {
-    pub actual_triangles_count: usize,
     pub vertices: Vec<Vertex>,
     pub triangles: Vec<IndexedTriangle>,
 }
 
 impl From<IndexedMesh> for Mesh {
     fn from(indexed_mesh: IndexedMesh) -> Self {
-        let mut triangles = Vec::with_capacity(indexed_mesh.actual_triangles_count);
+        let mut triangles = Vec::with_capacity(indexed_mesh.triangles.len());
         for indexed_triangle in indexed_mesh.triangles {
             let triangle = Triangle {
                 normal: indexed_triangle.normal,
@@ -79,10 +77,7 @@ impl From<IndexedMesh> for Mesh {
             triangles.push(triangle)
         }
 
-        Self {
-            reported_count: indexed_mesh.reported_triangles_count,
-            triangles,
-        }
+        Self { triangles }
     }
 }
 
@@ -254,16 +249,10 @@ fn indexed_mesh_binary<R: Read>(s: &mut R) -> Result<(Vec<u8>, IndexedMesh)> {
 
 pub fn mesh(s: &[u8]) -> IResult<&[u8], Mesh> {
     let (s, _) = take(80usize)(s)?;
-    let (s, reported_count) = le_u32(s)?;
+    let (s, _reported_count) = le_u32(s)?;
     let (s, triangles) = many1(complete(triangle_binary))(s)?;
 
-    Ok((
-        s,
-        Mesh {
-            reported_count,
-            triangles,
-        },
-    ))
+    Ok((s, Mesh { triangles }))
 }
 
 fn three_f32s(s: &[u8]) -> IResult<&[u8], [f32; 3]> {
@@ -476,7 +465,6 @@ fn build_indexed_mesh(triangles: &[Triangle]) -> IndexedMesh {
         .collect();
 
     IndexedMesh {
-        actual_triangles_count: indexed_triangles.len(),
         vertices,
         triangles: indexed_triangles,
     }
@@ -559,8 +547,6 @@ mod tests {
         let indexed_mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned()));
 
         let test_mesh = IndexedMesh {
-            actual_triangles_count: 2,
-
             #[cfg(feature = "na")]
             vertices: vec![
                 Point3::new(8.08661, 0.373289, 54.1924),
@@ -689,7 +675,6 @@ mod tests {
             Ok((
                 vec!().as_slice(),
                 Mesh {
-                    reported_count: 0,
                     triangles: vec!(
                         #[cfg(feature = "na")]
                         Triangle {
@@ -751,7 +736,6 @@ mod tests {
         assert_eq!(
             indexed_mesh_binary(&mut all).unwrap().1,
             IndexedMesh {
-                actual_triangles_count: 2,
                 triangles: vec!(
                     #[cfg(feature = "na")]
                     IndexedTriangle {
