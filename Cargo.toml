@@ -12,7 +12,7 @@ default = []
 [dependencies]
 nom = "5.1"
 rustc-hash = { version = "1.0", optional = true }
-nalgebra = { version = "0.19", optional = true }
+nalgebra = { version = "0.20", optional = true }
 
 [dev-dependencies]
 criterion = "0.3"
