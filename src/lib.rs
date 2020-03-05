@@ -5,7 +5,7 @@ use nom::character::complete::multispace0;
 use nom::character::complete::*;
 use nom::combinator::{complete, opt, rest};
 use nom::multi::many1;
-use nom::number::complete::{float, le_f32, le_u32};
+use nom::number::complete::{float, le_f32};
 use nom::IResult;
 use nom::*;
 use std::error::Error;
@@ -100,7 +100,7 @@ impl From<IndexedMesh> for Mesh {
 /// binary. While a binary stl can in theory contain this sequence,
 /// the odds of this are low. This is a tradeoff to avoid something
 /// both more complicated and less performant.
-pub fn parse_stl<R: Read + Seek>(bytes: &mut R) -> Result<(Vec<u8>, IndexedMesh)> {
+pub fn parse_stl_indexed<R: Read + Seek>(bytes: &mut R) -> Result<(Vec<u8>, IndexedMesh)> {
     if contains_facet_normal_bytes(bytes.by_ref()) {
         bytes.seek(SeekFrom::Start(0))?;
 
@@ -117,6 +117,26 @@ pub fn parse_stl<R: Read + Seek>(bytes: &mut R) -> Result<(Vec<u8>, IndexedMesh)
     } else {
         bytes.seek(SeekFrom::Start(0))?;
         indexed_mesh_binary(bytes.by_ref())
+    }
+}
+
+pub fn parse_stl_unindexed<R: Read + Seek>(bytes: &mut R) -> Result<(Vec<u8>, Mesh)> {
+    if contains_facet_normal_bytes(bytes.by_ref()) {
+        bytes.seek(SeekFrom::Start(0))?;
+
+        let mut buf = vec![];
+
+        bytes.read_to_end(&mut buf)?;
+
+        let res = mesh_ascii(&buf);
+
+        match res {
+            Ok((s, mesh)) => Ok((s, mesh)),
+            Err(e) => Err(e),
+        }
+    } else {
+        bytes.seek(SeekFrom::Start(0))?;
+        mesh_binary(bytes.by_ref())
     }
 }
 
@@ -166,6 +186,13 @@ const NOMINAL_CHUNK_SIZE: usize = 100;
 const NOMINAL_CHUNK_SIZE_BYTES: usize = TRIANGLE_SIZE_BYTES * NOMINAL_CHUNK_SIZE; // 50 * 100 = 5,000 bytes
 
 fn indexed_mesh_binary<R: Read>(s: &mut R) -> Result<(Vec<u8>, IndexedMesh)> {
+    let (s, mesh) = mesh_binary(s)?;
+    let indexed_mesh: IndexedMesh = mesh.into();
+
+    Ok((s, indexed_mesh))
+}
+
+fn mesh_binary<R: Read>(s: &mut R) -> Result<(Vec<u8>, Mesh)> {
     let mut header_and_triangles_count = vec![0u8; HEADER_SIZE_BYTES];
 
     let read_result = s.read_exact(&mut header_and_triangles_count);
@@ -250,15 +277,11 @@ fn indexed_mesh_binary<R: Read>(s: &mut R) -> Result<(Vec<u8>, IndexedMesh)> {
         vec![]
     };
 
-    Ok((rem, build_indexed_mesh(&all_triangles)))
-}
+    let mesh = Mesh {
+        triangles: all_triangles,
+    };
 
-pub fn mesh(s: &[u8]) -> IResult<&[u8], Mesh> {
-    let (s, _) = take(80usize)(s)?;
-    let (s, _reported_count) = le_u32(s)?;
-    let (s, triangles) = many1(complete(triangle_binary))(s)?;
-
-    Ok((s, Mesh { triangles }))
+    Ok((rem, mesh))
 }
 
 fn three_f32s(s: &[u8]) -> IResult<&[u8], [f32; 3]> {
@@ -304,7 +327,14 @@ fn not_line_ending(c: u8) -> bool {
 
 type BytesSliceResult<'a> = IResult<&'a [u8], &'a [u8]>;
 
-fn indexed_mesh_ascii<'a>(s: &'a [u8]) -> Result<(Vec<u8>, IndexedMesh)> {
+fn indexed_mesh_ascii(s: &[u8]) -> Result<(Vec<u8>, IndexedMesh)> {
+    let (s, mesh) = mesh_ascii(s)?;
+    let indexed_mesh = mesh.into();
+
+    Ok((s.to_vec(), indexed_mesh))
+}
+
+fn mesh_ascii<'a>(s: &'a [u8]) -> Result<(Vec<u8>, Mesh)> {
     let res: BytesSliceResult<'a> = tag("solid ")(s);
 
     let (s, _): (&'a [u8], ()) = match res {
@@ -354,10 +384,12 @@ fn indexed_mesh_ascii<'a>(s: &'a [u8]) -> Result<(Vec<u8>, IndexedMesh)> {
         Err(e) => return Err(Box::new(e.to_owned())),
     };
 
-    Ok((s.to_vec(), build_indexed_mesh(&triangles)))
+    let mesh = Mesh { triangles };
+
+    Ok((s.to_vec(), mesh))
 }
 
-named!(pub whitespace, eat_separator!(&b" \t\r\n"[..]));
+named!(whitespace, eat_separator!(&b" \t\r\n"[..]));
 
 fn three_floats(s: &[u8]) -> IResult<&[u8], [f32; 3]> {
     let (s, f1) = float(s)?;
@@ -486,14 +518,14 @@ mod tests {
         // derived from: https://www.thingiverse.com/thing:1187833
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let ascii_mesh = parse_stl(&mut moon);
+        let ascii_mesh = parse_stl_indexed(&mut moon);
 
         assert!(&ascii_mesh.is_ok());
 
         // credit: https://www.thingiverse.com/thing:26227
         let vase_file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
         let mut root_vase = BufReader::new(&vase_file);
-        let binary_mesh = parse_stl(&mut root_vase);
+        let binary_mesh = parse_stl_indexed(&mut root_vase);
 
         assert!(binary_mesh.is_ok());
     }
@@ -550,7 +582,8 @@ mod tests {
                endfacet
              endsolid OpenSCAD_Model";
 
-        let indexed_mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned()));
+        let indexed_mesh =
+            parse_stl_indexed(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned()));
 
         let test_mesh = IndexedMesh {
             #[cfg(feature = "na")]
@@ -605,7 +638,7 @@ mod tests {
         // derived from: https://www.thingiverse.com/thing:1187833
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let mesh = parse_stl(&mut moon);
+        let mesh = parse_stl_indexed(&mut moon);
 
         assert!(&mesh.is_ok());
         assert_eq!(&mesh.unwrap().0, b"")
@@ -658,7 +691,7 @@ mod tests {
     #[test]
     fn parses_mesh() {
         let header = vec![0; 80];
-        let count = vec![0; 4];
+        let count = 2u32.to_le_bytes().to_vec();
         let body = vec![
             // triangle 1
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // normal
@@ -674,45 +707,46 @@ mod tests {
             0, 0, // uint16
         ];
 
-        let all = [header, count, body].concat();
+        let mut all = std::io::Cursor::new(vec![header, count, body].concat());
+
+        let test_mesh = parse_stl_unindexed(&mut all).unwrap();
+
+        assert_eq!(test_mesh.0, vec![].as_slice());
 
         assert_eq!(
-            mesh(&all),
-            Ok((
-                vec!().as_slice(),
-                Mesh {
-                    triangles: vec!(
-                        #[cfg(feature = "na")]
-                        Triangle {
-                            normal: Vector3::new(0.0, 0.0, 0.0),
-                            vertices: [
-                                Point3::new(0.0, 0.0, 0.0),
-                                Point3::new(0.0, 0.0, 0.0),
-                                Point3::new(0.0, 0.0, 0.0)
-                            ]
-                        },
-                        #[cfg(feature = "na")]
-                        Triangle {
-                            normal: Vector3::new(0.0, 0.0, 0.0),
-                            vertices: [
-                                Point3::new(0.0, 0.0, 0.0),
-                                Point3::new(0.0, 0.0, 0.0),
-                                Point3::new(0.0, 0.0, 0.0)
-                            ]
-                        },
-                        #[cfg(not(feature = "na"))]
-                        Triangle {
-                            normal: [0.0, 0.0, 0.0],
-                            vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
-                        },
-                        #[cfg(not(feature = "na"))]
-                        Triangle {
-                            normal: [0.0, 0.0, 0.0],
-                            vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
-                        },
-                    ),
-                }
-            ))
+            test_mesh.1,
+            Mesh {
+                triangles: vec!(
+                    #[cfg(feature = "na")]
+                    Triangle {
+                        normal: Vector3::new(0.0, 0.0, 0.0),
+                        vertices: [
+                            Point3::new(0.0, 0.0, 0.0),
+                            Point3::new(0.0, 0.0, 0.0),
+                            Point3::new(0.0, 0.0, 0.0)
+                        ]
+                    },
+                    #[cfg(feature = "na")]
+                    Triangle {
+                        normal: Vector3::new(0.0, 0.0, 0.0),
+                        vertices: [
+                            Point3::new(0.0, 0.0, 0.0),
+                            Point3::new(0.0, 0.0, 0.0),
+                            Point3::new(0.0, 0.0, 0.0)
+                        ]
+                    },
+                    #[cfg(not(feature = "na"))]
+                    Triangle {
+                        normal: [0.0, 0.0, 0.0],
+                        vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+                    },
+                    #[cfg(not(feature = "na"))]
+                    Triangle {
+                        normal: [0.0, 0.0, 0.0],
+                        vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+                    },
+                ),
+            }
         );
     }
 
@@ -778,7 +812,7 @@ mod tests {
         let file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
         let mut root_vase = BufReader::new(&file);
         let start = std::time::Instant::now();
-        let (remaining, mesh) = parse_stl(&mut root_vase).unwrap();
+        let (remaining, mesh) = parse_stl_indexed(&mut root_vase).unwrap();
         let end = std::time::Instant::now();
         println!("root_vase time: {:?}", end - start);
 
@@ -791,7 +825,7 @@ mod tests {
         // credit: https://www.thingiverse.com/thing:26227
         let file = std::fs::File::open("./fixtures/Root_Vase_solid_start.stl").unwrap();
         let mut root_vase = BufReader::new(&file);
-        let (remaining, mesh) = parse_stl(&mut root_vase).unwrap();
+        let (remaining, mesh) = parse_stl_indexed(&mut root_vase).unwrap();
 
         assert_eq!(remaining, b"");
         assert_eq!(mesh.triangles.len(), 596_736);
@@ -803,7 +837,7 @@ mod tests {
         let moon_file =
             std::fs::File::open("./fixtures/MOON_PRISM_POWER_no_closing_name.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let mesh = parse_stl(&mut moon);
+        let mesh = parse_stl_indexed(&mut moon);
         let (remaining, result) = mesh.unwrap();
         assert_eq!(remaining, &[]);
         assert_eq!(result.triangles.len(), 3698);
@@ -815,7 +849,7 @@ mod tests {
 
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER_dos.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let embedded_res = parse_stl(&mut moon);
+        let embedded_res = parse_stl_indexed(&mut moon);
         let (remaining, result) = embedded_res.unwrap();
         assert!(remaining.is_empty());
         assert_eq!(result.triangles.len(), 3698);
@@ -839,7 +873,7 @@ mod properties {
                 return TestResult::discard();
             }
 
-            TestResult::from_bool(parse_stl(&mut std::io::Cursor::new(xs)).is_ok())
+            TestResult::from_bool(parse_stl_indexed(&mut std::io::Cursor::new(xs)).is_ok())
         }
 
         let mut qc = QuickCheck::new();
