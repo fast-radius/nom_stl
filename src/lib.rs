@@ -61,6 +61,12 @@ pub struct IndexedMesh {
     pub triangles: Vec<IndexedTriangle>,
 }
 
+impl From<Mesh> for IndexedMesh {
+    fn from(mesh: Mesh) -> Self {
+        build_indexed_mesh(&mesh.triangles)
+    }
+}
+
 impl From<IndexedMesh> for Mesh {
     fn from(indexed_mesh: IndexedMesh) -> Self {
         let mut triangles = Vec::with_capacity(indexed_mesh.triangles.len());
