@@ -1,17 +1,17 @@
 #[cfg(feature = "na")]
 use nalgebra::{Point3, Vector3};
-use nom::bytes::complete::tag;
-use nom::bytes::complete::take;
-use nom::bytes::complete::take_while1;
+use nom::bytes::complete::{tag, take, take_while1};
 use nom::character::complete::multispace0;
 use nom::character::complete::*;
-use nom::combinator::complete;
-use nom::combinator::opt;
-use nom::combinator::rest;
+use nom::combinator::{complete, opt, rest};
 use nom::multi::many1;
 use nom::number::complete::{float, le_f32, le_u32};
 use nom::IResult;
 use nom::*;
+use std::error::Error;
+use std::io::{Read, Seek, SeekFrom};
+
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[cfg(feature = "fx")]
 use rustc_hash::FxHashMap as HashMap;
@@ -39,7 +39,6 @@ pub struct Triangle {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mesh {
-    pub reported_count: u32,
     pub triangles: Vec<Triangle>,
 }
 
@@ -58,15 +57,13 @@ pub struct IndexedTriangle {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexedMesh {
-    pub reported_triangles_count: u32,
-    pub actual_triangles_count: usize,
     pub vertices: Vec<Vertex>,
     pub triangles: Vec<IndexedTriangle>,
 }
 
 impl From<IndexedMesh> for Mesh {
     fn from(indexed_mesh: IndexedMesh) -> Self {
-        let mut triangles = Vec::with_capacity(indexed_mesh.actual_triangles_count);
+        let mut triangles = Vec::with_capacity(indexed_mesh.triangles.len());
         for indexed_triangle in indexed_mesh.triangles {
             let triangle = Triangle {
                 normal: indexed_triangle.normal,
@@ -80,10 +77,7 @@ impl From<IndexedMesh> for Mesh {
             triangles.push(triangle)
         }
 
-        Self {
-            reported_count: indexed_mesh.reported_triangles_count,
-            triangles,
-        }
+        Self { triangles }
     }
 }
 
@@ -100,28 +94,37 @@ impl From<IndexedMesh> for Mesh {
 /// binary. While a binary stl can in theory contain this sequence,
 /// the odds of this are low. This is a tradeoff to avoid something
 /// both more complicated and less performant.
-pub fn parse_stl(bytes: &[u8]) -> IResult<&[u8], IndexedMesh> {
-    if contains_facet_normal_bytes(bytes) {
-        indexed_mesh_ascii(bytes)
+pub fn parse_stl<R: Read + Seek>(bytes: &mut R) -> Result<(Vec<u8>, IndexedMesh)> {
+    if contains_facet_normal_bytes(bytes.by_ref()) {
+        bytes.seek(SeekFrom::Start(0))?;
+
+        let mut buf = vec![];
+
+        bytes.read_to_end(&mut buf)?;
+
+        let res = indexed_mesh_ascii(&buf);
+
+        match res {
+            Ok((s, mesh)) => Ok((s, mesh)),
+            Err(e) => Err(e),
+        }
     } else {
-        indexed_mesh_binary(bytes)
+        bytes.seek(SeekFrom::Start(0))?;
+        indexed_mesh_binary(bytes.by_ref())
     }
 }
 
-fn contains_facet_normal_bytes(bytes: &[u8]) -> bool {
-    let mut identifier_search_bytes_length =
-        match std::env::var("NOM_IDENTIFIER_SEARCH_BYTES_LENGTH") {
-            Ok(length) => length.parse().unwrap_or_else(|_| 1024),
-            Err(_e) => 1024,
-        };
-
-    identifier_search_bytes_length = if bytes.len() <= identifier_search_bytes_length {
-        bytes.len()
-    } else {
-        identifier_search_bytes_length
+fn contains_facet_normal_bytes<R: Read>(bytes: &mut R) -> bool {
+    let identifier_search_bytes_length = match std::env::var("NOM_IDENTIFIER_SEARCH_BYTES_LENGTH") {
+        Ok(length) => length.parse().unwrap_or_else(|_| 1024),
+        Err(_e) => 1024,
     };
 
-    search_bytes(&bytes[..identifier_search_bytes_length], b"facet normal").is_some()
+    let mut search_space = vec![0u8; identifier_search_bytes_length];
+
+    bytes.read_to_end(&mut search_space).unwrap();
+
+    search_bytes(&search_space, b"facet normal").is_some()
 }
 
 fn search_bytes(bytes: &[u8], target: &[u8]) -> Option<usize> {
@@ -132,27 +135,124 @@ fn search_bytes(bytes: &[u8], target: &[u8]) -> Option<usize> {
 
 // BINARY GRAMMAR
 /////////////////////////////////////////////////////////////////
+//
+// Format of a binary STL:
+//
+// UINT8[80] – Header
+// UINT32 – Number of triangles
+//
+// foreach triangle
+// REAL32[3] – Normal vector
+// REAL32[3] – Vertex 1
+// REAL32[3] – Vertex 2
+// REAL32[3] – Vertex 3
+// UINT16 – Attribute byte count
+// end
+//
+// Therefor we see that the size of an STL is:
+// 80 byte header
+// + 4 byte triangle size
+// + (n * (12 + 12 + 12 + 12 + 2))
 
-fn indexed_mesh_binary(s: &[u8]) -> IResult<&[u8], IndexedMesh> {
-    let (s, _) = take(80usize)(s)?;
-    let (s, reported_count) = le_u32(s)?;
-    let (s, triangles) = many1(complete(triangle_binary))(s)?;
+const HEADER_SIZE_BYTES: usize = 84; // 80 + 4
+const TRIANGLE_SIZE_BYTES: usize = 50; // 12 + 12 + 12 + 12 + 2
+const NOMINAL_CHUNK_SIZE: usize = 100;
+const NOMINAL_CHUNK_SIZE_BYTES: usize = TRIANGLE_SIZE_BYTES * NOMINAL_CHUNK_SIZE; // 50 * 100 = 5,000 bytes
 
-    Ok((s, build_indexed_mesh(&triangles, reported_count)))
+fn indexed_mesh_binary<R: Read>(s: &mut R) -> Result<(Vec<u8>, IndexedMesh)> {
+    let mut header_and_triangles_count = vec![0u8; HEADER_SIZE_BYTES];
+
+    let read_result = s.read_exact(&mut header_and_triangles_count);
+    match read_result {
+        Ok(()) => (),
+        Err(e) => return Err(Box::new(e)),
+    }
+
+    let reported_triangle_count = u32::from_le_bytes([
+        header_and_triangles_count[80],
+        header_and_triangles_count[81],
+        header_and_triangles_count[82],
+        header_and_triangles_count[83],
+    ]);
+
+    let calculated_bytes_size = reported_triangle_count as usize * TRIANGLE_SIZE_BYTES;
+
+    let number_of_nominal_chunks_to_read = calculated_bytes_size / NOMINAL_CHUNK_SIZE_BYTES;
+
+    let remainder_chunk_length =
+        calculated_bytes_size - (number_of_nominal_chunks_to_read * NOMINAL_CHUNK_SIZE_BYTES);
+
+    let mut all_triangles: Vec<Triangle> = Vec::with_capacity(reported_triangle_count as usize);
+
+    let mut bytes_read: usize = 0;
+
+    for _chunk in 0..number_of_nominal_chunks_to_read {
+        let chunk_buf = {
+            let mut chunk_buf = vec![0u8; NOMINAL_CHUNK_SIZE_BYTES];
+            let read_result = s.read_exact(&mut chunk_buf);
+
+            match read_result {
+                Ok(()) => {
+                    bytes_read += NOMINAL_CHUNK_SIZE_BYTES;
+                }
+                Err(e) => return Err(Box::new(e)),
+            }
+            chunk_buf
+        };
+
+        let triangles_result =
+            nom::multi::count(complete(triangle_binary), NOMINAL_CHUNK_SIZE)(&chunk_buf);
+
+        match triangles_result {
+            Ok((_, mut triangles)) => {
+                all_triangles.append(&mut triangles);
+            }
+            Err(e) => return Err(Box::new(e.to_owned())),
+        }
+    }
+
+    if remainder_chunk_length > 0 {
+        let mut chunk_buf = Vec::with_capacity(remainder_chunk_length);
+        let read_result = s.read_to_end(&mut chunk_buf);
+
+        match read_result {
+            Ok(chunk_bytes_read) => {
+                bytes_read += chunk_bytes_read;
+            }
+            Err(e) => return Err(Box::new(e)),
+        }
+
+        let triangles_result = nom::multi::many1(complete(triangle_binary))(&chunk_buf);
+
+        match triangles_result {
+            Ok((_, mut triangles)) => {
+                all_triangles.append(&mut triangles);
+            }
+            Err(e) => return Err(Box::new(e.to_owned())),
+        }
+    }
+
+    let rem = if bytes_read < calculated_bytes_size {
+        let mut rem = vec![];
+        let read_result = s.read_to_end(&mut rem);
+
+        match read_result {
+            Ok(_) => rem,
+            Err(e) => return Err(Box::new(e)),
+        }
+    } else {
+        vec![]
+    };
+
+    Ok((rem, build_indexed_mesh(&all_triangles)))
 }
 
 pub fn mesh(s: &[u8]) -> IResult<&[u8], Mesh> {
     let (s, _) = take(80usize)(s)?;
-    let (s, reported_count) = le_u32(s)?;
+    let (s, _reported_count) = le_u32(s)?;
     let (s, triangles) = many1(complete(triangle_binary))(s)?;
 
-    Ok((
-        s,
-        Mesh {
-            reported_count,
-            triangles,
-        },
-    ))
+    Ok((s, Mesh { triangles }))
 }
 
 fn three_f32s(s: &[u8]) -> IResult<&[u8], [f32; 3]> {
@@ -196,18 +296,59 @@ fn not_line_ending(c: u8) -> bool {
     c != b'\r' && c != b'\n'
 }
 
-fn indexed_mesh_ascii(s: &[u8]) -> IResult<&[u8], IndexedMesh> {
-    let (s, _) = tag("solid ")(s)?;
-    let (s, _) = take_while1(not_line_ending)(s)?;
-    let (s, _) = line_ending(s)?;
-    let (s, triangles) = many1(triangle_ascii)(s)?;
+type BytesSliceResult<'a> = IResult<&'a [u8], &'a [u8]>;
 
-    let (s, _) = multispace1(s)?;
+fn indexed_mesh_ascii<'a>(s: &'a [u8]) -> Result<(Vec<u8>, IndexedMesh)> {
+    let res: BytesSliceResult<'a> = tag("solid ")(s);
 
-    let (s, _) = tag("endsolid")(s)?;
-    let (s, _) = opt(rest)(s)?;
+    let (s, _): (&'a [u8], ()) = match res {
+        Ok((s, _)) => (s, ()),
+        Err(e) => return Err(Box::new(e.to_owned())),
+    };
 
-    Ok((s, build_indexed_mesh(&triangles, 0)))
+    let res: IResult<&'a [u8], Option<&[u8]>> = opt(take_while1(not_line_ending))(s);
+
+    let (s, _): (&'a [u8], ()) = match res {
+        Ok((s, _)) => (s, ()),
+        Err(e) => return Err(Box::new(e.to_owned())),
+    };
+
+    let res: BytesSliceResult<'a> = line_ending(s);
+
+    let (s, _): (&'a [u8], ()) = match res {
+        Ok((s, _)) => (s, ()),
+        Err(e) => return Err(Box::new(e.to_owned())),
+    };
+
+    let res: IResult<&'a [u8], Vec<Triangle>> = many1(triangle_ascii)(s);
+
+    let (s, triangles): (&'a [u8], Vec<Triangle>) = match res {
+        Ok((s, triangles)) => (s, triangles),
+        Err(e) => return Err(Box::new(e.to_owned())),
+    };
+
+    let res: BytesSliceResult<'a> = multispace1(s);
+
+    let (s, _): (&'a [u8], ()) = match res {
+        Ok((s, _)) => (s, ()),
+        Err(e) => return Err(Box::new(e.to_owned())),
+    };
+
+    let res: BytesSliceResult<'a> = tag("endsolid")(s);
+
+    let (s, _): (&'a [u8], ()) = match res {
+        Ok((s, _)) => (s, ()),
+        Err(e) => return Err(Box::new(e.to_owned())),
+    };
+
+    let res: IResult<&'a [u8], Option<&[u8]>> = opt(rest)(s);
+
+    let (s, _) = match res {
+        Ok((s, _)) => (s, ()),
+        Err(e) => return Err(Box::new(e.to_owned())),
+    };
+
+    Ok((s.to_vec(), build_indexed_mesh(&triangles)))
 }
 
 named!(pub whitespace, eat_separator!(&b" \t\r\n"[..]));
@@ -277,7 +418,7 @@ fn triangle_ascii(s: &[u8]) -> IResult<&[u8], Triangle> {
     ))
 }
 
-fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMesh {
+fn build_indexed_mesh(triangles: &[Triangle]) -> IndexedMesh {
     #[cfg(feature = "fx")]
     let mut indexes = HashMap::default();
     #[cfg(not(feature = "fx"))]
@@ -289,19 +430,21 @@ fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMes
         .iter()
         .map(|triangle| {
             let mut vertex_indices = [0; 3];
-
             triangle
                 .vertices
                 .iter()
                 .enumerate()
                 .for_each(|(i, vertex)| {
                     #[cfg(feature = "na")]
-                    let vertex_as_u32_bits = unsafe {
-                        std::mem::transmute::<[f32; 3], [u32; 3]>([vertex.x, vertex.y, vertex.z])
-                    };
-                    #[cfg(not(feature = "na"))]
                     let vertex_as_u32_bits =
-                        unsafe { std::mem::transmute::<[f32; 3], [u32; 3]>(*vertex) };
+                        [vertex.x.to_bits(), vertex.y.to_bits(), vertex.z.to_bits()];
+
+                    #[cfg(not(feature = "na"))]
+                    let vertex_as_u32_bits = [
+                        vertex[0].to_bits(),
+                        vertex[1].to_bits(),
+                        vertex[2].to_bits(),
+                    ];
 
                     let index = *indexes
                         .entry(vertex_as_u32_bits)
@@ -322,8 +465,6 @@ fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMes
         .collect();
 
     IndexedMesh {
-        reported_triangles_count: reported_count,
-        actual_triangles_count: indexed_triangles.len(),
         vertices,
         triangles: indexed_triangles,
     }
@@ -332,21 +473,21 @@ fn build_indexed_mesh(triangles: &[Triangle], reported_count: u32) -> IndexedMes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use memmap::MmapOptions;
+    use std::io::BufReader;
 
     #[test]
     fn parses_both_ascii_and_binary() {
         // derived from: https://www.thingiverse.com/thing:1187833
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
-        let moon = unsafe { MmapOptions::new().map(&moon_file).unwrap() };
-        let ascii_mesh = parse_stl(&moon);
+        let mut moon = BufReader::new(&moon_file);
+        let ascii_mesh = parse_stl(&mut moon);
 
         assert!(&ascii_mesh.is_ok());
 
         // credit: https://www.thingiverse.com/thing:26227
         let vase_file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
-        let root_vase = unsafe { MmapOptions::new().map(&vase_file).unwrap() };
-        let binary_mesh = parse_stl(&root_vase);
+        let mut root_vase = BufReader::new(&vase_file);
+        let binary_mesh = parse_stl(&mut root_vase);
 
         assert!(binary_mesh.is_ok());
     }
@@ -403,12 +544,9 @@ mod tests {
                endfacet
              endsolid OpenSCAD_Model";
 
-        let indexed_mesh = parse_stl(mesh_string.as_bytes());
+        let indexed_mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned()));
 
         let test_mesh = IndexedMesh {
-            reported_triangles_count: 0,
-            actual_triangles_count: 2,
-
             #[cfg(feature = "na")]
             vertices: vec![
                 Point3::new(8.08661, 0.373289, 54.1924),
@@ -453,15 +591,15 @@ mod tests {
             ],
         };
 
-        assert_eq!(indexed_mesh, Ok((vec!().as_slice(), test_mesh)))
+        assert_eq!(indexed_mesh.unwrap().1, test_mesh);
     }
 
     #[test]
     fn does_ascii_from_file() {
         // derived from: https://www.thingiverse.com/thing:1187833
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
-        let moon = unsafe { MmapOptions::new().map(&moon_file).unwrap() };
-        let mesh = parse_stl(&moon);
+        let mut moon = BufReader::new(&moon_file);
+        let mesh = parse_stl(&mut moon);
 
         assert!(&mesh.is_ok());
         assert_eq!(&mesh.unwrap().0, b"")
@@ -537,7 +675,6 @@ mod tests {
             Ok((
                 vec!().as_slice(),
                 Mesh {
-                    reported_count: 0,
                     triangles: vec!(
                         #[cfg(feature = "na")]
                         Triangle {
@@ -576,7 +713,7 @@ mod tests {
     #[test]
     fn parses_indexed_mesh() {
         let header = vec![0; 80];
-        let count = vec![0; 4];
+        let count = 2u32.to_le_bytes().to_vec();
         let body = vec![
             // triangle 1
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // normal
@@ -592,43 +729,40 @@ mod tests {
             0, 0, // uint16
         ];
 
-        let all = [header, count, body].concat();
+        let concated = vec![header, count, body].concat();
+
+        let mut all = std::io::Cursor::new(concated);
 
         assert_eq!(
-            indexed_mesh_binary(&all),
-            Ok((
-                vec!().as_slice(),
-                IndexedMesh {
-                    reported_triangles_count: 0,
-                    actual_triangles_count: 2,
-                    triangles: vec!(
-                        #[cfg(feature = "na")]
-                        IndexedTriangle {
-                            normal: Vector3::new(0.0, 0.0, 0.0),
-                            vertices: [0, 0, 0]
-                        },
-                        #[cfg(feature = "na")]
-                        IndexedTriangle {
-                            normal: Vector3::new(0.0, 0.0, 0.0),
-                            vertices: [0, 0, 0]
-                        },
-                        #[cfg(not(feature = "na"))]
-                        IndexedTriangle {
-                            normal: [0.0, 0.0, 0.0],
-                            vertices: [0, 0, 0]
-                        },
-                        #[cfg(not(feature = "na"))]
-                        IndexedTriangle {
-                            normal: [0.0, 0.0, 0.0],
-                            vertices: [0, 0, 0]
-                        },
-                    ),
+            indexed_mesh_binary(&mut all).unwrap().1,
+            IndexedMesh {
+                triangles: vec!(
                     #[cfg(feature = "na")]
-                    vertices: vec!(Point3::new(0.0, 0.0, 0.0)),
+                    IndexedTriangle {
+                        normal: Vector3::new(0.0, 0.0, 0.0),
+                        vertices: [0, 0, 0]
+                    },
+                    #[cfg(feature = "na")]
+                    IndexedTriangle {
+                        normal: Vector3::new(0.0, 0.0, 0.0),
+                        vertices: [0, 0, 0]
+                    },
                     #[cfg(not(feature = "na"))]
-                    vertices: vec!([0.0, 0.0, 0.0]),
-                }
-            ))
+                    IndexedTriangle {
+                        normal: [0.0, 0.0, 0.0],
+                        vertices: [0, 0, 0]
+                    },
+                    #[cfg(not(feature = "na"))]
+                    IndexedTriangle {
+                        normal: [0.0, 0.0, 0.0],
+                        vertices: [0, 0, 0]
+                    },
+                ),
+                #[cfg(feature = "na")]
+                vertices: vec!(Point3::new(0.0, 0.0, 0.0)),
+                #[cfg(not(feature = "na"))]
+                vertices: vec!([0.0, 0.0, 0.0]),
+            }
         );
     }
 
@@ -636,25 +770,25 @@ mod tests {
     fn does_binary_from_file() {
         // credit: https://www.thingiverse.com/thing:26227
         let file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
-        let root_vase = unsafe { MmapOptions::new().map(&file).unwrap() };
+        let mut root_vase = BufReader::new(&file);
         let start = std::time::Instant::now();
-        let mesh = parse_stl(&root_vase);
+        let (remaining, mesh) = parse_stl(&mut root_vase).unwrap();
         let end = std::time::Instant::now();
         println!("root_vase time: {:?}", end - start);
 
-        assert!(mesh.is_ok());
-        assert_eq!(mesh.unwrap().0, b"")
+        assert_eq!(remaining, b"");
+        assert_eq!(mesh.triangles.len(), 596_736);
     }
 
     #[test]
     fn does_binary_from_file_starting_with_solid() {
         // credit: https://www.thingiverse.com/thing:26227
         let file = std::fs::File::open("./fixtures/Root_Vase_solid_start.stl").unwrap();
-        let root_vase = unsafe { MmapOptions::new().map(&file).unwrap() };
-        let mesh = parse_stl(&root_vase);
+        let mut root_vase = BufReader::new(&file);
+        let (remaining, mesh) = parse_stl(&mut root_vase).unwrap();
 
-        assert!(mesh.is_ok());
-        assert_eq!(mesh.unwrap().0, b"")
+        assert_eq!(remaining, b"");
+        assert_eq!(mesh.triangles.len(), 596_736);
     }
 
     #[test]
@@ -662,8 +796,8 @@ mod tests {
         // derived from: https://www.thingiverse.com/thing:1187833
         let moon_file =
             std::fs::File::open("./fixtures/MOON_PRISM_POWER_no_closing_name.stl").unwrap();
-        let moon = unsafe { MmapOptions::new().map(&moon_file).unwrap() };
-        let mesh = parse_stl(&moon);
+        let mut moon = BufReader::new(&moon_file);
+        let mesh = parse_stl(&mut moon);
         let (remaining, result) = mesh.unwrap();
         assert_eq!(remaining, &[]);
         assert_eq!(result.triangles.len(), 3698);
@@ -674,8 +808,8 @@ mod tests {
         // derived from: https://www.thingiverse.com/thing:1187833
 
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER_dos.stl").unwrap();
-        let moon = unsafe { MmapOptions::new().map(&moon_file).unwrap() };
-        let embedded_res = parse_stl(&moon);
+        let mut moon = BufReader::new(&moon_file);
+        let embedded_res = parse_stl(&mut moon);
         let (remaining, result) = embedded_res.unwrap();
         assert!(remaining.is_empty());
         assert_eq!(result.triangles.len(), 3698);
@@ -699,7 +833,7 @@ mod properties {
                 return TestResult::discard();
             }
 
-            TestResult::from_bool(parse_stl(&xs).is_ok())
+            TestResult::from_bool(parse_stl(&mut std::io::Cursor::new(xs)).is_ok())
         }
 
         let mut qc = QuickCheck::new();
