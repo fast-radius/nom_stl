@@ -219,9 +219,11 @@ fn mesh_binary<R: Read>(s: &mut R) -> Result<(Vec<u8>, Mesh)> {
 
     let mut bytes_read: usize = 0;
 
+    let mut chunk_buf = vec![0u8; NOMINAL_CHUNK_SIZE_BYTES];
+
     for _chunk in 0..number_of_nominal_chunks_to_read {
-        let chunk_buf = {
-            let mut chunk_buf = vec![0u8; NOMINAL_CHUNK_SIZE_BYTES];
+        {
+            let mut chunk_buf = &mut chunk_buf;
             let read_result = s.read_exact(&mut chunk_buf);
 
             match read_result {
@@ -230,7 +232,6 @@ fn mesh_binary<R: Read>(s: &mut R) -> Result<(Vec<u8>, Mesh)> {
                 }
                 Err(e) => return Err(Box::new(e)),
             }
-            chunk_buf
         };
 
         let triangles_result =
