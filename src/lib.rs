@@ -1,15 +1,12 @@
 use nom::bytes::complete::{tag, take, take_while1};
-use nom::character::complete::multispace0;
-use nom::character::complete::*;
+use nom::character::complete::{line_ending, multispace0, multispace1};
 use nom::combinator::{complete, opt, rest};
 use nom::multi::many1;
 use nom::number::complete::{float, le_f32};
-use nom::IResult;
-use nom::*;
-use std::cell::RefCell;
+use nom::{eat_separator, named, IResult};
 use std::error::Error;
 use std::io::{Read, Seek, SeekFrom};
-use std::rc::Rc;
+use std::marker::PhantomData;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -24,28 +21,29 @@ pub trait XYZ: Clone + Copy + From<[f32; 3]> + Into<[f32; 3]> {}
 
 impl XYZ for [f32; 3] {}
 
-pub trait Mesh<N: XYZ, V: XYZ, T: Triangle<N, V>> {
-    fn triangles(&self) -> &[T];
-}
-
-pub trait Triangle<N: XYZ, V: XYZ> {
-    fn normal(&self) -> N;
-    fn vertices(&self) -> [V; 3];
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UnindexedTriangle<N, V> {
     normal: N,
     vertices: [V; 3],
 }
 
-impl<N: XYZ, V: XYZ> Triangle<N, V> for UnindexedTriangle<N, V> {
-    fn normal(&self) -> N {
+impl<N: XYZ, V: XYZ> UnindexedTriangle<N, V> {
+    pub fn new(normal: N, vertices: [V; 3]) -> Self {
+        Self { normal, vertices }
+    }
+
+    #[inline]
+    pub fn normal(&self) -> N {
         self.normal
     }
 
-    fn vertices(&self) -> [V; 3] {
+    #[inline]
+    pub fn vertices(&self) -> [V; 3] {
         self.vertices
+    }
+
+    pub fn size_of(&self) -> usize {
+        std::mem::size_of::<Self>()
     }
 }
 
@@ -53,32 +51,72 @@ impl<N: XYZ, V: XYZ> Triangle<N, V> for UnindexedTriangle<N, V> {
 pub struct IndexedTriangle<N, V> {
     normal: N,
     vertices: [Index; 3],
-    vertices_ref: Rc<RefCell<Vec<V>>>,
+    _marker: PhantomData<V>,
 }
 
-impl<N: XYZ, V: XYZ> Triangle<N, V> for IndexedTriangle<N, V> {
-    fn normal(&self) -> N {
+impl<N: XYZ, V: XYZ> IndexedTriangle<N, V> {
+    pub fn new(normal: N, vertices: [Index; 3]) -> Self {
+        Self {
+            normal,
+            vertices,
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn normal(&self) -> N {
         self.normal
     }
 
-    fn vertices(&self) -> [V; 3] {
+    pub fn vertices(&self, parent: &IndexedMesh<N, V>) -> [V; 3] {
         [
-            self.vertices_ref.borrow()[self.vertices[0]],
-            self.vertices_ref.borrow()[self.vertices[1]],
-            self.vertices_ref.borrow()[self.vertices[2]],
+            parent.vertices[self.vertices[0]],
+            parent.vertices[self.vertices[1]],
+            parent.vertices[self.vertices[2]],
         ]
+    }
+
+    pub fn size_of(&self) -> usize {
+        std::mem::size_of::<Self>()
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct UnindexedMesh<N: XYZ, V: XYZ> {
-    pub triangles: Vec<UnindexedTriangle<N, V>>,
+    triangles: Vec<UnindexedTriangle<N, V>>,
+}
+
+impl<N: XYZ, V: XYZ> UnindexedMesh<N, V> {
+    pub fn triangles(&self) -> &[UnindexedTriangle<N, V>] {
+        self.triangles.as_slice()
+    }
+
+    pub fn size_of(&self) -> usize {
+        let struct_size = std::mem::size_of::<Self>();
+        let triangles_size = self.triangles.len() * std::mem::size_of::<UnindexedTriangle<N, V>>();
+        struct_size + triangles_size
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexedMesh<N: XYZ, V: XYZ> {
-    pub vertices: Rc<RefCell<Vec<V>>>,
-    pub triangles: Vec<IndexedTriangle<N, V>>,
+    vertices: Vec<V>,
+    triangles: Vec<IndexedTriangle<N, V>>,
+}
+
+impl<N: XYZ, V: XYZ> IndexedMesh<N, V> {
+    pub fn triangles(&self) -> &[IndexedTriangle<N, V>] {
+        self.triangles.as_slice()
+    }
+
+    pub fn size_of(&self) -> usize {
+        let struct_size = std::mem::size_of::<Self>();
+        let triangle_size = std::mem::size_of::<IndexedTriangle<N, V>>();
+        let vertices_size = self.vertices.len() * std::mem::size_of::<V>();
+        let triangles_size = self.triangles.len() * triangle_size;
+
+        struct_size + vertices_size + triangles_size
+    }
 }
 
 impl<N: XYZ, V: XYZ> From<UnindexedMesh<N, V>> for IndexedMesh<N, V> {
@@ -94,9 +132,9 @@ impl<N: XYZ, V: XYZ> From<IndexedMesh<N, V>> for UnindexedMesh<N, V> {
             let triangle = UnindexedTriangle {
                 normal: indexed_triangle.normal,
                 vertices: [
-                    indexed_mesh.vertices.borrow()[indexed_triangle.vertices[0]],
-                    indexed_mesh.vertices.borrow()[indexed_triangle.vertices[1]],
-                    indexed_mesh.vertices.borrow()[indexed_triangle.vertices[2]],
+                    indexed_mesh.vertices[indexed_triangle.vertices[0]],
+                    indexed_mesh.vertices[indexed_triangle.vertices[1]],
+                    indexed_mesh.vertices[indexed_triangle.vertices[2]],
                 ],
             };
 
@@ -472,7 +510,7 @@ fn build_indexed_mesh<N: XYZ, V: XYZ>(
     #[cfg(not(feature = "fx"))]
     let mut indexes = HashMap::new();
 
-    let vertices = Rc::new(RefCell::new(Vec::new()));
+    let mut vertices = Vec::new();
 
     let mut indexed_triangles: Vec<IndexedTriangle<N, V>> = Vec::with_capacity(triangles.len());
 
@@ -489,32 +527,28 @@ fn build_indexed_mesh<N: XYZ, V: XYZ>(
                 as_f32s[2].to_bits(),
             ];
 
-            let vlen = vertices.borrow().len();
+            let vertices_length = vertices.len();
 
-            let index = *indexes.entry(vertex_as_u32_bits).or_insert_with(|| vlen);
+            let index = *indexes
+                .entry(vertex_as_u32_bits)
+                .or_insert_with(|| vertices_length);
 
-            if index == vlen {
-                vertices.borrow_mut().push(*vertex);
+            if index == vertices_length {
+                vertices.push(*vertex);
             }
 
             vertex_indices[i] = index;
         }
 
-        let it = IndexedTriangle {
-            normal: triangle.normal,
-            vertices: vertex_indices,
-            vertices_ref: vertices.clone(),
-        };
+        let indexed_triangle = IndexedTriangle::new(triangle.normal, vertex_indices);
 
-        indexed_triangles.push(it);
+        indexed_triangles.push(indexed_triangle);
     }
 
-    let im: IndexedMesh<N, V> = IndexedMesh {
+    IndexedMesh {
         vertices,
         triangles: indexed_triangles,
-    };
-
-    im
+    }
 }
 
 #[cfg(test)]
@@ -589,28 +623,20 @@ mod tests {
         let indexed_mesh =
             parse_stl_indexed(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned()));
 
-        let vertices = Rc::new(RefCell::new(vec![
+        let vertices = vec![
             [8.08661, 0.373289, 54.1924],
             [8.02181, 0.689748, 54.2468],
             [8.10936, 0.0, 54.1733],
             [-0.196076, 7.34845, 8.72767],
             [0.0, 8.11983, 7.87508],
             [0.0, 7.342, 8.6529],
-        ]));
+        ];
 
         let test_mesh = IndexedMesh {
-            vertices: vertices.clone(),
+            vertices,
             triangles: vec![
-                IndexedTriangle {
-                    normal: [0.642777, -0.00000254044, 0.766053],
-                    vertices: [0, 1, 2],
-                    vertices_ref: vertices.clone(),
-                },
-                IndexedTriangle {
-                    normal: [-0.281083, -0.678599, -0.678599],
-                    vertices: [3, 4, 5],
-                    vertices_ref: vertices.clone(),
-                },
+                IndexedTriangle::new([0.642777, -0.00000254044, 0.766053], [0, 1, 2]),
+                IndexedTriangle::new([-0.281083, -0.678599, -0.678599], [3, 4, 5]),
             ],
         };
 
@@ -728,23 +754,15 @@ mod tests {
 
         let mut all = std::io::Cursor::new(concated);
 
-        let vertices = Rc::new(RefCell::new(vec![[0.0, 0.0, 0.0]]));
+        let vertices = vec![[0.0, 0.0, 0.0]];
 
         assert_eq!(
             indexed_mesh_binary(&mut all).unwrap().1,
             IndexedMesh {
                 vertices: vertices.clone(),
                 triangles: vec![
-                    IndexedTriangle {
-                        normal: [0.0, 0.0, 0.0],
-                        vertices: [0, 0, 0],
-                        vertices_ref: vertices.clone()
-                    },
-                    IndexedTriangle {
-                        normal: [0.0, 0.0, 0.0],
-                        vertices: [0, 0, 0],
-                        vertices_ref: vertices.clone()
-                    },
+                    IndexedTriangle::new([0.0, 0.0, 0.0], [0, 0, 0],),
+                    IndexedTriangle::new([0.0, 0.0, 0.0], [0, 0, 0],),
                 ],
             }
         );
