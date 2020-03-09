@@ -5,12 +5,10 @@ authors = ["Clark Kampfe <clark.kampfe@gmail.com>"]
 edition = "2018"
 
 [features]
-fx = ["rustc-hash"]
 default = []
 
 [dependencies]
 nom = "5.1"
-rustc-hash = { version = "1.0", optional = true }
 
 [dev-dependencies]
 criterion = "0.3"
