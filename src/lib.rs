@@ -19,6 +19,9 @@ pub struct Triangle<N, V> {
     vertices: [V; 3],
 }
 
+unsafe impl<N, V> Send for Triangle<N, V> {}
+unsafe impl<N, V> Sync for Triangle<N, V> {}
+
 impl<N: XYZ, V: XYZ> Triangle<N, V> {
     pub fn new(normal: N, vertices: [V; 3]) -> Self {
         Triangle { normal, vertices }
