@@ -49,6 +49,10 @@ pub struct Mesh<N: XYZ, V: XYZ> {
 }
 
 impl<N: XYZ, V: XYZ> Mesh<N, V> {
+    pub fn new(triangles: Vec<Triangle<N, V>>) -> Self {
+        Self { triangles }
+    }
+
     pub fn triangles(&self) -> &[Triangle<N, V>] {
         self.triangles.as_slice()
     }
@@ -225,9 +229,7 @@ fn mesh_binary<R: Read, N: XYZ, V: XYZ>(s: &mut R) -> Result<(Vec<u8>, Mesh<N, V
         vec![]
     };
 
-    let mesh = Mesh {
-        triangles: all_triangles,
-    };
+    let mesh = Mesh::new(all_triangles);
 
     Ok((rem, mesh))
 }
@@ -315,7 +317,7 @@ fn mesh_ascii<'a, N: XYZ, V: XYZ>(s: &'a [u8]) -> Result<(Vec<u8>, Mesh<N, V>)> 
         Err(e) => return Err(Box::new(e.to_owned())),
     };
 
-    let mesh = Mesh { triangles };
+    let mesh = Mesh::new(triangles);
 
     Ok((s.to_vec(), mesh))
 }
@@ -460,12 +462,10 @@ mod tests {
             [0.0, 7.342, 8.6529],
         ];
 
-        let test_mesh = Mesh {
-            triangles: vec![
-                Triangle::new([0.642777, -0.00000254044, 0.766053], v1),
-                Triangle::new([-0.281083, -0.678599, -0.678599], v2),
-            ],
-        };
+        let test_mesh = Mesh::new(vec![
+            Triangle::new([0.642777, -0.00000254044, 0.766053], v1),
+            Triangle::new([-0.281083, -0.678599, -0.678599], v2),
+        ]);
 
         assert_eq!(mesh.unwrap().1, test_mesh);
     }
@@ -542,18 +542,16 @@ mod tests {
 
         assert_eq!(
             test_mesh.1,
-            Mesh {
-                triangles: vec!(
-                    Triangle {
-                        normal: [0.0, 0.0, 0.0],
-                        vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
-                    },
-                    Triangle {
-                        normal: [0.0, 0.0, 0.0],
-                        vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
-                    },
-                ),
-            }
+            Mesh::new(vec![
+                Triangle {
+                    normal: [0.0, 0.0, 0.0],
+                    vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+                },
+                Triangle {
+                    normal: [0.0, 0.0, 0.0],
+                    vertices: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+                },
+            ],)
         );
     }
 
