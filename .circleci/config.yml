@@ -27,13 +27,7 @@ jobs:
           key: v1-cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
       - run:
           name: Test
-          command: cargo test --all --release --features=fx
-      - run:
-          name: Test Nalgebra
-          command: cargo test --all --release --features=fx,na
+          command: cargo test --all --release
       - run:
           name: Benchmarks
-          command: cargo bench --features=fx || true
-      - run:
-          name: Benchmarks Nalgebra
-          command: cargo bench --features=fx,na || true
+          command: cargo bench || true
