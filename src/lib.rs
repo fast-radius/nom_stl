@@ -27,17 +27,14 @@ impl<N: XYZ, V: XYZ> Triangle<N, V> {
         Triangle { normal, vertices }
     }
 
-    #[inline]
     pub fn normal(&self) -> N {
         self.normal
     }
 
-    #[inline]
     pub fn vertices(&self) -> [V; 3] {
         self.vertices
     }
 
-    #[inline]
     pub fn size_of(&self) -> usize {
         std::mem::size_of::<Self>()
     }
