@@ -4,9 +4,6 @@ version = "0.1.0"
 authors = ["Clark Kampfe <clark.kampfe@gmail.com>"]
 edition = "2018"
 
-[features]
-default = []
-
 [dependencies]
 nom = "5.1"
 
