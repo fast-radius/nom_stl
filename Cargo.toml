@@ -12,7 +12,6 @@ nom = "5.1"
 
 [dev-dependencies]
 criterion = "0.3"
-memmap = "0.7"
 quickcheck = "0.9"
 quickcheck_macros = "0.9"
 
