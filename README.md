@@ -3,105 +3,66 @@ nom_stl
 
 [![CircleCI](https://circleci.com/gh/fast-radius/nom_stl/tree/master.svg?style=svg&circle-token=3f57317aeed67f5d7eb5a23c0c587bfd98f5bb0b)](https://circleci.com/gh/fast-radius/nom_stl/tree/master)
 
-# What is this
+# What
 
-`nom_stl` is a binary and ASCII STL parser, written in Rust, using the [nom](https://github.com/Geal/nom) parser combinator library.
-It parses a 30M binary STL in <100ms.
+`nom_stl` is a binary and ASCII STL parser, written in pure Rust, with only one runtime dependency: the [nom](https://github.com/Geal/nom) parser combinator library.
+`nom_stl` automatically differentiates between ASCII and binary STLs.
+It parses a 30M binary STL in <40ms.
 
-`nom_stl` attempts to be mostly API compatible with [stl_io](https://github.com/hmeyer/stl_io), but is a new implementation rather than a fork.
-
-# What does it look like
-There isn't really a public API yet, but this is what a test case looks like:
+# Use
 
 ```rust
-#[test]
-fn parses_ascii_indexed_mesh() {
-    let mesh_string = "solid OpenSCAD_Model
-           facet normal 0.642777 -2.54044e-006 0.766053
-             outer loop
-               vertex 8.08661 0.373289 54.1924
-               vertex 8.02181 0.689748 54.2468
-               vertex 8.10936 0 54.1733
-             endloop
-           endfacet
-           facet normal -0.281083 -0.678599 -0.678599
-             outer loop
-               vertex -0.196076 7.34845 8.72767
-               vertex 0 8.11983 7.87508
-               vertex 0 7.342 8.6529
-             endloop
-           endfacet
-         endsolid OpenSCAD_Model";
+let file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
+let mut root_vase = BufReader::new(&file);
+let (remaining, mesh): (Vec<u8>, Mesh<[f32; 3], [f32; 3]>) =
+    parse_stl(&mut root_vase).unwrap();
 
-    let indexed_mesh = indexed_mesh_ascii(mesh_string.as_bytes());
-
-    assert_eq!(
-        indexed_mesh,
-        Ok((
-            vec!().as_slice(),
-            IndexedMesh {
-                reported_triangles_count: 0,
-                actual_triangles_count: 2,
-                vertices: vec!(
-                    [8.08661, 0.373289, 54.1924],
-                    [8.02181, 0.689748, 54.2468],
-                    [8.10936, 0.0, 54.1733],
-                    [-0.196076, 7.34845, 8.72767],
-                    [0.0, 8.11983, 7.87508],
-                    [0.0, 7.342, 8.6529]
-                ),
-                triangles: vec!(
-                    IndexedTriangle {
-                        normal: [0.642777, -0.00000254044, 0.766053],
-                        vertices: [0, 1, 2]
-                    },
-                    IndexedTriangle {
-                        normal: [-0.281083, -0.678599, -0.678599],
-                        vertices: [3, 4, 5]
-                    }
-                )
-            }
-        ))
-    )
-}
+assert_eq!(remaining, b"");
+assert_eq!(mesh.triangles.len(), 596_736);
 ```
 
-# Optional Nalgebra Integration
+`nom_stl` accepts STL bytes in a wide variety of argument formats: it will try to parse any collection of bytes that implements [Read](https://doc.rust-lang.org/std/io/trait.Read.html) and [Seek](https://doc.rust-lang.org/std/io/trait.Seek.html).
+It will also attempt to parse the normal vertex and point vertices of STL triangles into any types you wish as long as
+your types implement to the trait bounds: `pub trait XYZ: Clone + Copy + From<[f32; 3]> + Into<[f32; 3]> {}`.
+While support for `[f32; 3]` is built in, it is trivial to extend to other types, like [nalgebra](https://crates.io/crates/nalgebra),
+which we use in a few places.
 
-Nalgebra integration is available behind an opt-in feature flag, `na`.
-Add `nom_stl` to your `Cargo.toml` like this to enable Nalgebra types instead of standard library types:
+# Additional functionality
+
+See [stl_tools](https://github.com/fast-radius/stl_tools) for things like
+model dimensions, watertightness checks, small triangles detection, voxelization, and model support simulation.
+
+
+# Running the tests
 
 ```
-nom_stl = { git = "ssh://git@github.com/fast-radius/nom_stl", rev = "A GIT REVISION", features = ["na"] }
+$ cargo test
 ```
-
-With the `na` flag, triangle vertexes are `nalgebra::Point3<f32>` instead of `[f32; 3]`,
-and triangle normals are `nalgebra::Vector3<f32>` instead of `[f32; 3]`.
-
-# What doesn't it do
-- STL output, though this may change
-- Watertightness checks
-- Mesh repair
-- Dimensions/bounding box calculations
-
-# Running the tests faster
 
 To make the tests run faster (but increase build time), you can run the tests in `release` mode.
 To do this, run the following:
 
 ```
-cargo test --release --features=fx -- --nocapture
+$ cargo test --release
+```
+
+# Running the benchmarks
+
+```
+$ cargo bench
 ```
 
 
 # What does it need
 
-- [ ] A solid public API
+- [x] A solid public API
 - [x] Better tests, with better input data rather than 0's for some of the smaller parsers
 - [x] Testing around parsing Windows/DOS line-ending files
 - [x] Property testing (https://crates.io/crates/quickcheck)
-- [x] Latest Nom (5.0)
+- [x] Latest Nom (5.1)
 - [x] Optional [Nalgebra](https://www.nalgebra.org/) integration
+- [x] Buffered IO
+- [x] Generic normal and vertex types
 - [ ] Real documentation/rustdoc
 - [ ] A license
 - [ ] A home
