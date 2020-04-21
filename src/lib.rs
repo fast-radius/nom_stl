@@ -1,15 +1,49 @@
 use nom::bytes::complete::{tag, take, take_while1};
 use nom::character::complete::{line_ending, multispace0, multispace1};
-use nom::combinator::{complete, opt, rest};
+use nom::combinator::{opt, rest};
 use nom::multi::many1;
 use nom::number::complete::{float, le_f32};
 use nom::{eat_separator, named, IResult};
-use std::error::Error;
-use std::io::{Read, Seek, SeekFrom};
+use std::{
+    convert::TryInto,
+    io::{Read, Seek, SeekFrom},
+};
 
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
+type Result<T> = std::result::Result<T, Error>;
 
-pub trait XYZ: Clone + Copy + From<[f32; 3]> + Into<[f32; 3]> {}
+#[derive(Debug)]
+pub enum Error {
+    IOError(std::io::Error),
+    NomError(String),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            e => Some(e),
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(error: std::io::Error) -> Self {
+        Error::IOError(error)
+    }
+}
+
+impl<E: std::fmt::Debug> From<nom::Err<E>> for Error {
+    fn from(error: nom::Err<E>) -> Self {
+        Error::NomError(format!("{}", error))
+    }
+}
+
+pub trait XYZ: Clone + Copy + From<[f32; 3]> {}
 
 impl XYZ for [f32; 3] {}
 
@@ -74,7 +108,7 @@ impl<N: XYZ, V: XYZ> Mesh<N, V> {
 /// binary. While a binary stl can in theory contain this sequence,
 /// the odds of this are low. This is a tradeoff to avoid something
 /// both more complicated and less performant.
-pub fn parse_stl<R: Read + Seek, N: XYZ, V: XYZ>(bytes: &mut R) -> Result<(Vec<u8>, Mesh<N, V>)> {
+pub fn parse_stl<R: Read + Seek, N: XYZ, V: XYZ>(bytes: &mut R) -> Result<Mesh<N, V>> {
     if contains_facet_normal_bytes(bytes.by_ref()) {
         bytes.seek(SeekFrom::Start(0))?;
 
@@ -82,12 +116,7 @@ pub fn parse_stl<R: Read + Seek, N: XYZ, V: XYZ>(bytes: &mut R) -> Result<(Vec<u
 
         bytes.read_to_end(&mut buf)?;
 
-        let res = mesh_ascii(&buf);
-
-        match res {
-            Ok((s, mesh)) => Ok((s, mesh)),
-            Err(e) => Err(e),
-        }
+        mesh_ascii(&buf)
     } else {
         bytes.seek(SeekFrom::Start(0))?;
         mesh_binary(bytes.by_ref())
@@ -136,99 +165,77 @@ fn search_bytes(bytes: &[u8], target: &[u8]) -> Option<usize> {
 
 const HEADER_SIZE_BYTES: usize = 84; // 80 + 4
 const TRIANGLE_SIZE_BYTES: usize = 50; // 12 + 12 + 12 + 12 + 2
-const NOMINAL_CHUNK_SIZE: usize = 100;
-const NOMINAL_CHUNK_SIZE_BYTES: usize = TRIANGLE_SIZE_BYTES * NOMINAL_CHUNK_SIZE; // 50 * 100 = 5,000 bytes
 
-fn mesh_binary<R: Read, N: XYZ, V: XYZ>(s: &mut R) -> Result<(Vec<u8>, Mesh<N, V>)> {
-    let mut header_and_triangles_count = vec![0u8; HEADER_SIZE_BYTES];
+fn mesh_binary<R: Read, N: XYZ, V: XYZ>(mut s: R) -> Result<Mesh<N, V>> {
+    let mut header_and_triangles_count = [0u8; HEADER_SIZE_BYTES];
 
-    let read_result = s.read_exact(&mut header_and_triangles_count);
-    match read_result {
-        Ok(()) => (),
-        Err(e) => return Err(Box::new(e)),
-    }
+    s.read_exact(&mut header_and_triangles_count)?;
 
-    let reported_triangle_count = u32::from_le_bytes([
-        header_and_triangles_count[80],
-        header_and_triangles_count[81],
-        header_and_triangles_count[82],
-        header_and_triangles_count[83],
-    ]);
-
-    let calculated_bytes_size = reported_triangle_count as usize * TRIANGLE_SIZE_BYTES;
-
-    let number_of_nominal_chunks_to_read = calculated_bytes_size / NOMINAL_CHUNK_SIZE_BYTES;
-
-    let remainder_chunk_length =
-        calculated_bytes_size - (number_of_nominal_chunks_to_read * NOMINAL_CHUNK_SIZE_BYTES);
+    let reported_triangle_count = u32::from_le_bytes(
+        header_and_triangles_count[80..84]
+            .try_into()
+            .expect("Could not get four bytes to create u32"),
+    );
 
     let mut all_triangles: Vec<Triangle<N, V>> =
         Vec::with_capacity(reported_triangle_count as usize);
 
-    let mut bytes_read: usize = 0;
+    let triangles_reader: TrianglesIter<R, N, V> =
+        TrianglesIter::new(s, reported_triangle_count as usize);
 
-    let mut chunk_buf = vec![0u8; NOMINAL_CHUNK_SIZE_BYTES];
-
-    for _chunk in 0..number_of_nominal_chunks_to_read {
-        {
-            let mut chunk_buf = &mut chunk_buf;
-            let read_result = s.read_exact(&mut chunk_buf);
-
-            match read_result {
-                Ok(()) => {
-                    bytes_read += NOMINAL_CHUNK_SIZE_BYTES;
-                }
-                Err(e) => return Err(Box::new(e)),
-            }
-        };
-
-        let triangles_result =
-            nom::multi::count(complete(triangle_binary), NOMINAL_CHUNK_SIZE)(&chunk_buf);
-
-        match triangles_result {
-            Ok((_, mut triangles)) => {
-                all_triangles.append(&mut triangles);
-            }
-            Err(e) => return Err(Box::new(e.to_owned())),
-        }
+    for triangle in triangles_reader {
+        all_triangles.push(triangle?);
     }
-
-    if remainder_chunk_length > 0 {
-        let mut chunk_buf = Vec::with_capacity(remainder_chunk_length);
-        let read_result = s.read_to_end(&mut chunk_buf);
-
-        match read_result {
-            Ok(chunk_bytes_read) => {
-                bytes_read += chunk_bytes_read;
-            }
-            Err(e) => return Err(Box::new(e)),
-        }
-
-        let triangles_result = nom::multi::many1(complete(triangle_binary))(&chunk_buf);
-
-        match triangles_result {
-            Ok((_, mut triangles)) => {
-                all_triangles.append(&mut triangles);
-            }
-            Err(e) => return Err(Box::new(e.to_owned())),
-        }
-    }
-
-    let rem = if bytes_read < calculated_bytes_size {
-        let mut rem = vec![];
-        let read_result = s.read_to_end(&mut rem);
-
-        match read_result {
-            Ok(_) => rem,
-            Err(e) => return Err(Box::new(e)),
-        }
-    } else {
-        vec![]
-    };
 
     let mesh = Mesh::new(all_triangles);
 
-    Ok((rem, mesh))
+    Ok(mesh)
+}
+#[derive(Debug)]
+pub struct TrianglesIter<R: Read, N: XYZ, V: XYZ> {
+    reader: R,
+    buf: Vec<u8>,
+    triangles_to_read: usize,
+    triangles_read: usize,
+    normal_type: std::marker::PhantomData<N>,
+    vertex_type: std::marker::PhantomData<V>,
+}
+
+impl<R: Read, N: XYZ, V: XYZ> TrianglesIter<R, N, V> {
+    fn new(reader: R, triangles_to_read: usize) -> Self {
+        TrianglesIter {
+            reader,
+            buf: vec![0u8; TRIANGLE_SIZE_BYTES],
+            triangles_to_read,
+            triangles_read: 0,
+            normal_type: std::marker::PhantomData,
+            vertex_type: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<R: Read, N: XYZ, V: XYZ> Iterator for TrianglesIter<R, N, V> {
+    type Item = Result<Triangle<N, V>>;
+
+    fn next(&mut self) -> Option<Result<Triangle<N, V>>> {
+        if self.triangles_read >= self.triangles_to_read {
+            None
+        } else {
+            match self.reader.read_exact(&mut self.buf) {
+                Ok(()) => match triangle_binary(&self.buf) {
+                    Ok((_r, t)) => {
+                        self.triangles_read += 1;
+                        Some(Ok(t))
+                    }
+                    Err(err) => {
+                        self.triangles_read += 1;
+                        Some(Err(Error::from(err)))
+                    }
+                },
+                Err(e) => Some(Err(Error::from(e))),
+            }
+        }
+    }
 }
 
 fn three_f32s(s: &[u8]) -> IResult<&[u8], [f32; 3]> {
@@ -262,61 +269,22 @@ fn not_line_ending(c: u8) -> bool {
     c != b'\r' && c != b'\n'
 }
 
-type BytesSliceResult<'a> = IResult<&'a [u8], &'a [u8]>;
-
-fn mesh_ascii<'a, N: XYZ, V: XYZ>(s: &'a [u8]) -> Result<(Vec<u8>, Mesh<N, V>)> {
-    let res: BytesSliceResult<'a> = tag("solid ")(s);
-
-    let (s, _): (&'a [u8], ()) = match res {
-        Ok((s, _)) => (s, ()),
-        Err(e) => return Err(Box::new(e.to_owned())),
-    };
-
-    let res: IResult<&'a [u8], Option<&[u8]>> = opt(take_while1(not_line_ending))(s);
-
-    let (s, _): (&'a [u8], ()) = match res {
-        Ok((s, _)) => (s, ()),
-        Err(e) => return Err(Box::new(e.to_owned())),
-    };
-
-    let res: BytesSliceResult<'a> = line_ending(s);
-
-    let (s, _): (&'a [u8], ()) = match res {
-        Ok((s, _)) => (s, ()),
-        Err(e) => return Err(Box::new(e.to_owned())),
-    };
-
-    let res: IResult<&'a [u8], Vec<Triangle<N, V>>> = many1(triangle_ascii)(s);
-
-    let (s, triangles): (&'a [u8], Vec<Triangle<N, V>>) = match res {
-        Ok((s, triangles)) => (s, triangles),
-        Err(e) => return Err(Box::new(e.to_owned())),
-    };
-
-    let res: BytesSliceResult<'a> = multispace1(s);
-
-    let (s, _): (&'a [u8], ()) = match res {
-        Ok((s, _)) => (s, ()),
-        Err(e) => return Err(Box::new(e.to_owned())),
-    };
-
-    let res: BytesSliceResult<'a> = tag("endsolid")(s);
-
-    let (s, _): (&'a [u8], ()) = match res {
-        Ok((s, _)) => (s, ()),
-        Err(e) => return Err(Box::new(e.to_owned())),
-    };
-
-    let res: IResult<&'a [u8], Option<&[u8]>> = opt(rest)(s);
-
-    let (s, _) = match res {
-        Ok((s, _)) => (s, ()),
-        Err(e) => return Err(Box::new(e.to_owned())),
-    };
-
+fn mesh_ascii<'a, N: XYZ, V: XYZ>(s: &'a [u8]) -> Result<Mesh<N, V>> {
+    let (s, _) = tag("solid ")(s).map_err(to_crate_err)?;
+    let (s, _) = opt(take_while1(not_line_ending))(s).map_err(to_crate_err)?;
+    let (s, _) = line_ending(s).map_err(to_crate_err)?;
+    let (s, triangles) = many1(triangle_ascii)(s)?;
+    let (s, _) = multispace1(s).map_err(to_crate_err)?;
+    let (s, _) = tag("endsolid")(s).map_err(to_crate_err)?;
+    let (_s, _) = opt(rest)(s).map_err(to_crate_err)?;
     let mesh = Mesh::new(triangles);
 
-    Ok((s.to_vec(), mesh))
+    Ok(mesh)
+}
+
+#[inline(always)]
+fn to_crate_err(e: nom::Err<(&[u8], nom::error::ErrorKind)>) -> Error {
+    e.into()
 }
 
 named!(whitespace, eat_separator!(&b" \t\r\n"[..]));
@@ -331,11 +299,6 @@ fn three_floats(s: &[u8]) -> IResult<&[u8], [f32; 3]> {
     Ok((s, [f1, f2, f3]))
 }
 
-fn vertex(s: &[u8]) -> IResult<&[u8], ()> {
-    let (s, _) = tag("vertex")(s)?;
-    Ok((s, ()))
-}
-
 fn triangle_ascii<N: XYZ, V: XYZ>(s: &[u8]) -> IResult<&[u8], Triangle<N, V>> {
     let (s, _) = multispace0(s)?;
     let (s, _) = tag("facet normal")(s)?;
@@ -347,20 +310,9 @@ fn triangle_ascii<N: XYZ, V: XYZ>(s: &[u8]) -> IResult<&[u8], Triangle<N, V>> {
     let (s, _) = tag("outer loop")(s)?;
     let (s, _) = multispace1(s)?;
 
-    let (s, _) = vertex(s)?;
-    let (s, _) = multispace1(s)?;
-    let (s, v1) = three_floats(s)?;
-    let (s, _) = multispace1(s)?;
-
-    let (s, _) = vertex(s)?;
-    let (s, _) = multispace1(s)?;
-    let (s, v2) = three_floats(s)?;
-    let (s, _) = multispace1(s)?;
-
-    let (s, _) = vertex(s)?;
-    let (s, _) = multispace1(s)?;
-    let (s, v3) = three_floats(s)?;
-    let (s, _) = multispace1(s)?;
+    let (s, v1) = vertex(s)?;
+    let (s, v2) = vertex(s)?;
+    let (s, v3) = vertex(s)?;
 
     let (s, _) = tag("endloop")(s)?;
     let (s, _) = multispace1(s)?;
@@ -376,6 +328,19 @@ fn triangle_ascii<N: XYZ, V: XYZ>(s: &[u8]) -> IResult<&[u8], Triangle<N, V>> {
     ))
 }
 
+fn vertex(s: &[u8]) -> IResult<&[u8], [f32; 3]> {
+    let (s, _) = recognize_vertex(s)?;
+    let (s, _) = multispace1(s)?;
+    let (s, v) = three_floats(s)?;
+    let (s, _) = multispace1(s)?;
+    Ok((s, v))
+}
+
+fn recognize_vertex(s: &[u8]) -> IResult<&[u8], ()> {
+    let (s, _) = tag("vertex")(s)?;
+    Ok((s, ()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,19 +351,15 @@ mod tests {
         // derived from: https://www.thingiverse.com/thing:1187833
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let (remaining, ascii_mesh): (Vec<u8>, Mesh<[f32; 3], [f32; 3]>) =
-            parse_stl(&mut moon).unwrap();
+        let ascii_mesh: Mesh<[f32; 3], [f32; 3]> = parse_stl(&mut moon).unwrap();
 
-        assert_eq!(Vec::<u8>::new(), remaining);
         assert_eq!(3698, ascii_mesh.triangles.len());
 
         // credit: https://www.thingiverse.com/thing:26227
         let vase_file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
         let mut root_vase = BufReader::new(&vase_file);
-        let (remaining, binary_mesh): (Vec<u8>, Mesh<[f32; 3], [f32; 3]>) =
-            parse_stl(&mut root_vase).unwrap();
+        let binary_mesh: Mesh<[f32; 3], [f32; 3]> = parse_stl(&mut root_vase).unwrap();
 
-        assert_eq!(Vec::<u8>::new(), remaining);
         assert_eq!(596_736, binary_mesh.triangles.len());
     }
 
@@ -464,7 +425,7 @@ mod tests {
             Triangle::new([-0.281083, -0.678599, -0.678599], v2),
         ]);
 
-        assert_eq!(mesh.unwrap().1, test_mesh);
+        assert_eq!(mesh.unwrap(), test_mesh);
     }
 
     #[test]
@@ -472,9 +433,8 @@ mod tests {
         // derived from: https://www.thingiverse.com/thing:1187833
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let (remaining, mesh): (Vec<u8>, Mesh<[f32; 3], [f32; 3]>) = parse_stl(&mut moon).unwrap();
+        let mesh: Mesh<[f32; 3], [f32; 3]> = parse_stl(&mut moon).unwrap();
 
-        assert_eq!(Vec::<u8>::new(), remaining);
         assert_eq!(3698, mesh.triangles.len());
     }
 
@@ -535,10 +495,8 @@ mod tests {
 
         let test_mesh = parse_stl(&mut all).unwrap();
 
-        assert_eq!(test_mesh.0, vec![].as_slice());
-
         assert_eq!(
-            test_mesh.1,
+            test_mesh,
             Mesh::new(vec![
                 Triangle {
                     normal: [0.0, 0.0, 0.0],
@@ -558,12 +516,10 @@ mod tests {
         let file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
         let mut root_vase = BufReader::new(&file);
         let start = std::time::Instant::now();
-        let (remaining, mesh): (Vec<u8>, Mesh<[f32; 3], [f32; 3]>) =
-            parse_stl(&mut root_vase).unwrap();
+        let mesh: Mesh<[f32; 3], [f32; 3]> = parse_stl(&mut root_vase).unwrap();
         let end = std::time::Instant::now();
         println!("root_vase time: {:?}", end - start);
 
-        assert_eq!(remaining, b"");
         assert_eq!(mesh.triangles.len(), 596_736);
     }
 
@@ -572,10 +528,8 @@ mod tests {
         // credit: https://www.thingiverse.com/thing:26227
         let file = std::fs::File::open("./fixtures/Root_Vase_solid_start.stl").unwrap();
         let mut root_vase = BufReader::new(&file);
-        let (remaining, mesh): (Vec<u8>, Mesh<[f32; 3], [f32; 3]>) =
-            parse_stl(&mut root_vase).unwrap();
+        let mesh: Mesh<[f32; 3], [f32; 3]> = parse_stl(&mut root_vase).unwrap();
 
-        assert_eq!(remaining, b"");
         assert_eq!(mesh.triangles.len(), 596_736);
     }
 
@@ -585,9 +539,7 @@ mod tests {
         let moon_file =
             std::fs::File::open("./fixtures/MOON_PRISM_POWER_no_closing_name.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let (remaining, result): (Vec<u8>, Mesh<[f32; 3], [f32; 3]>) =
-            parse_stl(&mut moon).unwrap();
-        assert_eq!(remaining, &[]);
+        let result: Mesh<[f32; 3], [f32; 3]> = parse_stl(&mut moon).unwrap();
         assert_eq!(result.triangles.len(), 3698);
     }
 
@@ -597,9 +549,7 @@ mod tests {
 
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER_dos.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let (remaining, result): (Vec<u8>, Mesh<[f32; 3], [f32; 3]>) =
-            parse_stl(&mut moon).unwrap();
-        assert!(remaining.is_empty());
+        let result: Mesh<[f32; 3], [f32; 3]> = parse_stl(&mut moon).unwrap();
         assert_eq!(result.triangles.len(), 3698);
     }
 }
