@@ -14,7 +14,7 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     IOError(std::io::Error),
-    NomError(String),
+    ParseError(String),
 }
 
 impl std::fmt::Display for Error {
@@ -39,7 +39,7 @@ impl From<std::io::Error> for Error {
 
 impl<E: std::fmt::Debug> From<nom::Err<E>> for Error {
     fn from(error: nom::Err<E>) -> Self {
-        Error::NomError(format!("{}", error))
+        Error::ParseError(format!("{}", error))
     }
 }
 
