@@ -1,8 +1,15 @@
 [package]
 name = "nom_stl"
 version = "0.1.0"
-authors = ["Clark Kampfe <clark.kampfe@gmail.com>"]
+authors = ["Clark Kampfe <clark.kampfe@fastradius.com>", "Aaron Brenzel <aaron.brenzel@fastradius.com>"]
 edition = "2018"
+license = "MIT"
+description = "A fast STL parser"
+homepage = "https://github.com/fast-radius/nom_stl"
+repository = "https://github.com/fast-radius/nom_stl"
+readme = "README.md"
+categories = ["parser-implementations"]
+keywords = ["stl", "parser", "mesh", "nom"]
 
 [dependencies]
 nom = "5.1"
