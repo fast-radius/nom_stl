@@ -15,7 +15,7 @@ fn parse_stl_binary_big(c: &mut Criterion) {
     group.sample_size(15);
 
     group.bench_function("parse_stl_root_vase_binary_big_unindexed", move |b| {
-        b.iter(|| parse_stl::<BufReader<&File>, [f32; 3], [f32; 3]>(&mut root_vase))
+        b.iter(|| parse_stl::<BufReader<&File>>(&mut root_vase))
     });
 
     group.finish();
@@ -26,7 +26,7 @@ fn parse_stl_binary(c: &mut Criterion) {
     let mut moon = BufReader::new(&moon_file);
 
     c.bench_function("parse_stl_moon_prism_power_binary", move |b| {
-        b.iter(|| parse_stl::<BufReader<&File>, [f32; 3], [f32; 3]>(&mut moon))
+        b.iter(|| parse_stl::<BufReader<&File>>(&mut moon))
     });
 }
 
@@ -35,7 +35,7 @@ fn parse_stl_ascii(c: &mut Criterion) {
     let mut moon = BufReader::new(&moon_file);
 
     c.bench_function("parse_stl_moon_prism_power", move |b| {
-        b.iter(|| parse_stl::<BufReader<&File>, [f32; 3], [f32; 3]>(&mut moon))
+        b.iter(|| parse_stl::<BufReader<&File>>(&mut moon))
     });
 }
 
