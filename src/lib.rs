@@ -5,6 +5,7 @@ use nom::multi::many1;
 use nom::number::complete::{float, le_f32};
 use nom::{eat_separator, named, IResult};
 use std::{
+    collections::HashSet,
     convert::TryInto,
     io::{Read, Seek, SeekFrom},
 };
@@ -82,6 +83,32 @@ impl Mesh {
 
     pub fn triangles(&self) -> &[Triangle] {
         self.triangles.as_slice()
+    }
+
+    pub fn vertices(&self) -> impl Iterator<Item = Vertex> + '_ {
+        self.vertices_ref().cloned()
+    }
+
+    pub fn vertices_ref(&self) -> impl Iterator<Item = &Vertex> {
+        self.triangles()
+            .iter()
+            .flat_map(|triangle| triangle.vertices.as_ref())
+    }
+
+    pub fn unique_vertices(&self) -> impl Iterator<Item = Vertex> {
+        let set = self
+            .vertices_ref()
+            .map(|vertex| {
+                [
+                    vertex[0].to_bits(),
+                    vertex[1].to_bits(),
+                    vertex[2].to_bits(),
+                ]
+            })
+            .collect::<HashSet<_>>();
+
+        set.into_iter()
+            .map(|[x, y, z]| [f32::from_bits(x), f32::from_bits(y), f32::from_bits(z)])
     }
 
     pub fn size_of(&self) -> usize {
@@ -542,6 +569,76 @@ mod tests {
         let mut moon = BufReader::new(&moon_file);
         let result: Mesh = parse_stl(&mut moon).unwrap();
         assert_eq!(result.triangles.len(), 3698);
+    }
+
+    #[test]
+    fn all_vertices() {
+        let mesh_string = "solid OpenSCAD_Model
+               facet normal 0.642777 -2.54044e-006 0.766053
+                 outer loop
+                   vertex 8.08661 0.373289 54.1924
+                   vertex 8.02181 0.689748 54.2468
+                   vertex 8.10936 0 54.1733
+                 endloop
+               endfacet
+               facet normal -0.281083 -0.678599 -0.678599
+                 outer loop
+                   vertex -0.196076 7.34845 8.72767
+                   vertex 0 8.11983 7.87508
+                   vertex 0 7.342 8.6529
+                 endloop
+               endfacet
+               facet normal -0.281083 -0.678599 -0.678599
+                 outer loop
+                   vertex 8.08661 0.373289 54.1924
+                   vertex 8.02181 0.689748 54.2468
+                   vertex 0 7.342 8.6529
+                 endloop
+               endfacet
+             endsolid OpenSCAD_Model";
+
+        let mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned())).unwrap();
+
+        assert_eq!(
+            mesh.vertices_ref().collect::<Vec<&Vertex>>().len(),
+            mesh.triangles().len() * 3
+        );
+
+        assert_eq!(
+            mesh.vertices().collect::<Vec<Vertex>>().len(),
+            mesh.triangles().len() * 3
+        );
+    }
+
+    #[test]
+    fn makes_unique_vertices() {
+        let mesh_string = "solid OpenSCAD_Model
+               facet normal 0.642777 -2.54044e-006 0.766053
+                 outer loop
+                   vertex 8.08661 0.373289 54.1924
+                   vertex 8.02181 0.689748 54.2468
+                   vertex 8.10936 0 54.1733
+                 endloop
+               endfacet
+               facet normal -0.281083 -0.678599 -0.678599
+                 outer loop
+                   vertex -0.196076 7.34845 8.72767
+                   vertex 0 8.11983 7.87508
+                   vertex 0 7.342 8.6529
+                 endloop
+               endfacet
+               facet normal -0.281083 -0.678599 -0.678599
+                 outer loop
+                   vertex 8.08661 0.373289 54.1924
+                   vertex 8.02181 0.689748 54.2468
+                   vertex 0 7.342 8.6529
+                 endloop
+               endfacet
+             endsolid OpenSCAD_Model";
+
+        let mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned())).unwrap();
+
+        assert_eq!(mesh.unique_vertices().collect::<Vec<_>>().len(), 6);
     }
 }
 
