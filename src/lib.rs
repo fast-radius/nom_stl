@@ -214,7 +214,7 @@ fn mesh_binary<R: Read>(mut s: R) -> Result<Mesh> {
     Ok(mesh)
 }
 #[derive(Debug)]
-pub struct TrianglesIter<R: Read> {
+struct TrianglesIter<R: Read> {
     reader: R,
     buf: Vec<u8>,
     triangles_to_read: usize,
