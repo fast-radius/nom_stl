@@ -5,7 +5,7 @@ use nom::multi::many1;
 use nom::number::complete::{float, le_f32};
 use nom::{eat_separator, named, IResult};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     convert::TryInto,
     io::{Read, Seek, SeekFrom},
 };
@@ -115,6 +115,95 @@ impl Mesh {
         let struct_size = std::mem::size_of::<Self>();
         let triangles_size = self.triangles.len() * std::mem::size_of::<Triangle>();
         struct_size + triangles_size
+    }
+}
+
+pub struct IndexMesh {
+    triangles: Vec<IndexTriangle>,
+    vertices: Vec<Vertex>,
+}
+
+impl IndexMesh {
+    pub fn triangles(&self) -> &[IndexTriangle] {
+        self.triangles.as_slice()
+    }
+
+    pub fn vertices(&self) -> &[Vertex] {
+        &self.vertices
+    }
+
+    pub fn size_of(&self) -> usize {
+        let struct_size = std::mem::size_of::<Self>();
+        let triangles_size = self.triangles.len() * std::mem::size_of::<IndexTriangle>();
+        struct_size + triangles_size
+    }
+}
+
+pub struct IndexTriangle {
+    normal: Vertex,
+    vertices_indices: [usize; 3],
+}
+
+impl IndexTriangle {
+    pub fn normal(&self) -> Vertex {
+        self.normal
+    }
+
+    pub fn vertices(&self, vertices: &[Vertex]) -> [Vertex; 3] {
+        [
+            vertices[self.vertices_indices[0]],
+            vertices[self.vertices_indices[1]],
+            vertices[self.vertices_indices[2]],
+        ]
+    }
+
+    pub fn vertices_indices(&self) -> [usize; 3] {
+        self.vertices_indices
+    }
+
+    pub fn size_of(&self) -> usize {
+        std::mem::size_of::<Self>()
+    }
+}
+
+impl From<Mesh> for IndexMesh {
+    fn from(mesh: Mesh) -> Self {
+        let mut vertices: Vec<[f32; 3]> = vec![];
+        let mut vertices_bits_to_indices: HashMap<[u32; 3], usize> = HashMap::new();
+        let mut vertices_indices: [usize; 3] = [0, 0, 0];
+
+        let index_triangles = mesh
+            .triangles
+            .iter()
+            .map(|triangle| {
+                for (i, vertex) in triangle.vertices.iter().enumerate() {
+                    let bits = [
+                        vertex[0].to_bits(),
+                        vertex[1].to_bits(),
+                        vertex[2].to_bits(),
+                    ];
+
+                    if let Some(index) = vertices_bits_to_indices.get(&bits) {
+                        vertices_indices[i] = *index;
+                    } else {
+                        let index = vertices.len();
+                        vertices_bits_to_indices.insert(bits, index);
+                        vertices_indices[i] = index;
+                        vertices.push(*vertex);
+                    }
+                }
+
+                IndexTriangle {
+                    normal: triangle.normal,
+                    vertices_indices,
+                }
+            })
+            .collect();
+
+        IndexMesh {
+            triangles: index_triangles,
+            vertices,
+        }
     }
 }
 
@@ -639,6 +728,40 @@ mod tests {
         let mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned())).unwrap();
 
         assert_eq!(mesh.unique_vertices().collect::<Vec<_>>().len(), 6);
+    }
+
+    #[test]
+    fn creates_an_index_mesh() {
+        let mesh_string = "solid OpenSCAD_Model
+               facet normal 0.642777 -2.54044e-006 0.766053
+                 outer loop
+                   vertex 8.08661 0.373289 54.1924
+                   vertex 8.02181 0.689748 54.2468
+                   vertex 8.10936 0 54.1733
+                 endloop
+               endfacet
+               facet normal -0.281083 -0.678599 -0.678599
+                 outer loop
+                   vertex 8.08661 0.373289 54.1924
+                   vertex 8.02181 0.689748 54.2468
+                   vertex 0 7.342 8.6529
+                 endloop
+               endfacet
+               facet normal -0.281083 -0.678599 -0.678599
+                 outer loop
+                   vertex 8.08661 0.373289 54.1924
+                   vertex 8.02181 0.689748 54.2468
+                   vertex 4.0 4.0 4.0
+                 endloop
+               endfacet
+             endsolid OpenSCAD_Model";
+
+        let mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned())).unwrap();
+
+        let index_mesh: IndexMesh = mesh.into();
+
+        assert_eq!(index_mesh.triangles().len(), 3);
+        assert_eq!(index_mesh.vertices().len(), 5);
     }
 }
 
