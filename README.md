@@ -61,7 +61,7 @@ $ cargo bench
 - [x] Buffered IO
 - [x] Generic normal and vertex types
 - [ ] Real documentation/rustdoc
-- [ ] A license
+- [x] A license
 - [ ] A home
 
 # Creative Commons
