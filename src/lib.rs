@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use nom::bytes::complete::{tag, take, take_while1};
 use nom::character::complete::{line_ending, multispace0, multispace1};
 use nom::combinator::{opt, rest};
@@ -49,9 +51,6 @@ pub struct Triangle {
     normal: Vertex,
     vertices: [Vertex; 3],
 }
-
-unsafe impl Send for Triangle {}
-unsafe impl Sync for Triangle {}
 
 impl Triangle {
     pub fn new(normal: Vertex, vertices: [Vertex; 3]) -> Self {
@@ -453,6 +452,23 @@ mod tests {
     use super::*;
     use std::io::BufReader;
 
+    fn to_bytes(vec: [f32; 3]) -> [u8; 12] {
+        [
+            vec[0].to_le_bytes()[0],
+            vec[0].to_le_bytes()[1],
+            vec[0].to_le_bytes()[2],
+            vec[0].to_le_bytes()[3],
+            vec[1].to_le_bytes()[0],
+            vec[1].to_le_bytes()[1],
+            vec[1].to_le_bytes()[2],
+            vec[1].to_le_bytes()[3],
+            vec[2].to_le_bytes()[0],
+            vec[2].to_le_bytes()[1],
+            vec[2].to_le_bytes()[2],
+            vec[2].to_le_bytes()[3],
+        ]
+    }
+
     #[test]
     fn parses_both_ascii_and_binary() {
         // derived from: https://www.thingiverse.com/thing:1187833
@@ -552,10 +568,10 @@ mod tests {
         let v2 = [1.1f32, 9.10f32, 3.9f32];
         let v3 = [2.0f32, 1.01f32, -5.2f32];
 
-        let normal_bytes: [u8; 12] = unsafe { std::mem::transmute(normal) };
-        let v1_bytes: [u8; 12] = unsafe { std::mem::transmute(v1) };
-        let v2_bytes: [u8; 12] = unsafe { std::mem::transmute(v2) };
-        let v3_bytes: [u8; 12] = unsafe { std::mem::transmute(v3) };
+        let normal_bytes = to_bytes(normal);
+        let v1_bytes: [u8; 12] = to_bytes(v1);
+        let v2_bytes: [u8; 12] = to_bytes(v2);
+        let v3_bytes: [u8; 12] = to_bytes(v3);
 
         // a 2-byte short that's ignored
         let attribute_byte_count_bytes: &[u8] = &[0, 0];
@@ -568,6 +584,7 @@ mod tests {
             attribute_byte_count_bytes,
         ]
         .concat();
+
         let test_triangle = Triangle {
             normal,
             vertices: [v1, v2, v3],
