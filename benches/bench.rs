@@ -34,7 +34,7 @@ fn parse_stl_ascii(c: &mut Criterion) {
     let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
     let mut moon = BufReader::new(&moon_file);
 
-    c.bench_function("parse_stl_moon_prism_power", move |b| {
+    c.bench_function("parse_stl_moon_prism_power_ascii", move |b| {
         b.iter(|| parse_stl::<BufReader<&File>>(&mut moon))
     });
 }
