@@ -1,4 +1,17 @@
+//! An parser for binary and ASCII STL files.
+//!
+//! ## Example
+//! ```rust
+//! use std::io::BufReader;
+//! use std::fs::File;
+//! let file = File::open("./fixtures/Root_Vase.stl").unwrap();
+//! let mut root_vase = BufReader::new(&file);
+//! let mesh: nom_stl::Mesh = nom_stl::parse_stl(&mut root_vase).unwrap();
+//! assert_eq!(mesh.triangles().len(), 596_736);
+//! ```
+
 #![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
 use nom::bytes::complete::{tag, take, take_while1};
 use nom::character::complete::{line_ending, multispace0, multispace1};
@@ -15,9 +28,15 @@ use std::{
 type Result<T> = std::result::Result<T, Error>;
 type Vertex = [f32; 3];
 
+/// An error is either an IOError (wrapping std::io::Error),
+/// or a parse error, indicating that the parser is unable to
+/// make progress on an invalid input. This error is derived
+/// from the underlying nom_stl error
 #[derive(Debug)]
 pub enum Error {
+    /// A wrapper for a std::io::Error
     IOError(std::io::Error),
+    /// Expressing the underlying nom_stl error
     ParseError(String),
 }
 
@@ -46,6 +65,7 @@ impl<E: std::fmt::Debug> From<nom::Err<E>> for Error {
     }
 }
 
+/// A triangle type with an included normal vertex and vertices.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Triangle {
     normal: Vertex,
@@ -53,47 +73,61 @@ pub struct Triangle {
 }
 
 impl Triangle {
+    /// Create a new triangle.
     pub fn new(normal: Vertex, vertices: [Vertex; 3]) -> Self {
         Triangle { normal, vertices }
     }
 
+    /// Return the normal vertex of the triangle.
+    /// This indicates the "front" of the triangle.
     pub fn normal(&self) -> Vertex {
         self.normal
     }
 
+    /// Return an array of the triangle's corner vertices
     pub fn vertices(&self) -> [Vertex; 3] {
         self.vertices
     }
 
+    /// The size of the `Triangle` struct at runtime.
     pub fn size_of(&self) -> usize {
         std::mem::size_of::<Self>()
     }
 }
 
+/// A triangle mesh represented as a vector of `Triangle`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mesh {
     triangles: Vec<Triangle>,
 }
 
 impl Mesh {
+    /// Create a triangle mesh from a `Vec` of `Triangle`.
     pub fn new(triangles: Vec<Triangle>) -> Self {
         Self { triangles }
     }
 
+    /// Return a slice of the mesh's triangles
     pub fn triangles(&self) -> &[Triangle] {
         self.triangles.as_slice()
     }
 
+    /// Returns the an iterator of vertices of all triangles.
+    /// This function clones/copies every vertex, and does not deduplicate vertices.
     pub fn vertices(&self) -> impl Iterator<Item = Vertex> + '_ {
         self.vertices_ref().cloned()
     }
 
+    /// Returns an iterator of vertex references for all triangles.
+    /// Does not deduplicate any vertices.
     pub fn vertices_ref(&self) -> impl Iterator<Item = &Vertex> {
         self.triangles()
             .iter()
             .flat_map(|triangle| triangle.vertices.as_ref())
     }
 
+    /// Returns an iterator of all unique vertices in the mesh.
+    /// This function clones/copies every vertex.
     pub fn unique_vertices(&self) -> impl Iterator<Item = Vertex> {
         let set = self
             .vertices_ref()
@@ -110,40 +144,52 @@ impl Mesh {
             .map(|[x, y, z]| [f32::from_bits(x), f32::from_bits(y), f32::from_bits(z)])
     }
 
+    /// The size of the `Mesh` struct at runtime.
     pub fn size_of(&self) -> usize {
         std::mem::size_of::<Self>()
     }
 }
 
+/// A triangle mesh represented as a vector of `IndexTriangle`
+/// and a vector of `Vertex`.
 pub struct IndexMesh {
     triangles: Vec<IndexTriangle>,
     vertices: Vec<Vertex>,
 }
 
 impl IndexMesh {
+    /// Returns a slice of all `IndexTriangle` in the mesh.
     pub fn triangles(&self) -> &[IndexTriangle] {
         self.triangles.as_slice()
     }
 
+    /// Returns a slice of all vertices in the mesh.
     pub fn vertices(&self) -> &[Vertex] {
         &self.vertices
     }
 
+    /// The size of the `IndexMesh` struct at runtime.
     pub fn size_of(&self) -> usize {
         std::mem::size_of::<Self>()
     }
 }
 
+/// A triangle type which contains a normal vertex and index references
+/// to vertices contained in a separate vertices container.
+/// See `IndexMesh`.
 pub struct IndexTriangle {
     normal: Vertex,
     vertices_indices: [usize; 3],
 }
 
 impl IndexTriangle {
+    /// The normal vector.
     pub fn normal(&self) -> Vertex {
         self.normal
     }
 
+    /// Returns the vertices for the `IndexTriangle` by looking them up
+    /// in the given `vertices` slice.
     pub fn vertices(&self, vertices: &[Vertex]) -> [Vertex; 3] {
         [
             vertices[self.vertices_indices[0]],
@@ -152,10 +198,13 @@ impl IndexTriangle {
         ]
     }
 
+    /// Returns the positions of the triangle's 3 vertices
+    /// in the separate vertices container.
     pub fn vertices_indices(&self) -> [usize; 3] {
         self.vertices_indices
     }
 
+    /// The size of the `IndexTriangle` at runtime.
     pub fn size_of(&self) -> usize {
         std::mem::size_of::<Self>()
     }
