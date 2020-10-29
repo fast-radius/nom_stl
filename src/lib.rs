@@ -111,9 +111,7 @@ impl Mesh {
     }
 
     pub fn size_of(&self) -> usize {
-        let struct_size = std::mem::size_of::<Self>();
-        let triangles_size = self.triangles.len() * std::mem::size_of::<Triangle>();
-        struct_size + triangles_size
+        std::mem::size_of::<Self>()
     }
 }
 
@@ -132,9 +130,7 @@ impl IndexMesh {
     }
 
     pub fn size_of(&self) -> usize {
-        let struct_size = std::mem::size_of::<Self>();
-        let triangles_size = self.triangles.len() * std::mem::size_of::<IndexTriangle>();
-        struct_size + triangles_size
+        std::mem::size_of::<Self>()
     }
 }
 
