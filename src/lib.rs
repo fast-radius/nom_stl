@@ -390,6 +390,7 @@ impl<R: Read> Iterator for TrianglesIter<R> {
 }
 
 fn three_f32s(s: &[u8]) -> IResult<&[u8], Vertex> {
+    assert!(s.len() >= 12);
     let (s, f1) = le_f32(s)?;
     let (s, f2) = le_f32(s)?;
     let (s, f3) = le_f32(s)?;
