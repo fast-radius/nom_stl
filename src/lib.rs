@@ -18,7 +18,7 @@ use nom::character::complete::{line_ending, multispace0, multispace1};
 use nom::combinator::{opt, rest};
 use nom::multi::many1;
 use nom::number::complete::{float, le_f32};
-use nom::{eat_separator, named, IResult};
+use nom::IResult;
 use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
@@ -438,8 +438,6 @@ fn mesh_ascii(s: &[u8]) -> Result<Mesh> {
 fn to_crate_err(e: nom::Err<(&[u8], nom::error::ErrorKind)>) -> Error {
     e.into()
 }
-
-named!(whitespace, eat_separator!(&b" \t\r\n"[..]));
 
 fn three_floats(s: &[u8]) -> IResult<&[u8], Vertex> {
     let (s, f1) = float(s)?;
