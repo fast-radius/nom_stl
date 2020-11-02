@@ -6,7 +6,7 @@
 
 `nom_stl` is a binary and ASCII STL parser, written in pure Rust, with only one runtime dependency: the [nom](https://github.com/Geal/nom) parser combinator library.
 `nom_stl` automatically differentiates between ASCII and binary STLs.
-It parses a 30M binary STL in <30ms.
+It parses a 30M binary STL in <20ms.
 
 # Use
 
