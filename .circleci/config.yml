@@ -13,6 +13,9 @@ jobs:
           name: Version information
           command: rustc --version; cargo --version; rustup --version
       - run:
+          name: Check formatting
+          command: cargo fmt -- --check
+      - run:
           name: Calculate dependencies
           command: cargo generate-lockfile
       - restore_cache:
