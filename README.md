@@ -19,11 +19,6 @@ assert_eq!(mesh.triangles.len(), 596_736);
 
 `nom_stl` accepts STL bytes in a wide variety of argument formats: it will try to parse any collection of bytes that implements [Read](https://doc.rust-lang.org/std/io/trait.Read.html) and [Seek](https://doc.rust-lang.org/std/io/trait.Seek.html).
 
-# Additional functionality
-
-See [stl_tools](https://github.com/fast-radius/stl_tools) for things like
-model dimensions, watertightness checks, small triangles detection, voxelization, and model support simulation.
-
 # Running the tests
 
 ```
@@ -52,9 +47,9 @@ $ cargo bench
 - [x] Latest Nom (5.1)
 - [x] Buffered IO
 - [x] Generic normal and vertex types
-- [ ] Real documentation/rustdoc
+- [x] Real documentation/rustdoc
 - [x] A license
-- [ ] A home
+- [x] A home
 
 # Creative Commons
 
