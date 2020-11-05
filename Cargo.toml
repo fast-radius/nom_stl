@@ -7,6 +7,7 @@ license = "MIT"
 description = "A fast STL parser"
 homepage = "https://github.com/fast-radius/nom_stl"
 repository = "https://github.com/fast-radius/nom_stl"
+documentation = "https://docs.rs/nom_stl/"
 readme = "README.md"
 categories = ["parser-implementations"]
 keywords = ["stl", "parser", "mesh", "nom"]
