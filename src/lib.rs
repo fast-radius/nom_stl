@@ -281,7 +281,7 @@ pub fn parse_stl<R: Read + Seek>(bytes: &mut R) -> Result<Mesh> {
 
 fn contains_facet_normal_bytes<R: Read>(bytes: &mut R) -> bool {
     let identifier_search_bytes_length = match std::env::var("NOM_IDENTIFIER_SEARCH_BYTES_LENGTH") {
-        Ok(length) => length.parse().unwrap_or_else(|_| 1024),
+        Ok(length) => length.parse().unwrap_or(1024),
         Err(_e) => 1024,
     };
 
