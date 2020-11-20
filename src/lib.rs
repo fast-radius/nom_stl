@@ -287,7 +287,10 @@ fn contains_facet_normal_bytes<R: Read>(bytes: &mut R) -> bool {
 
     let mut search_space = vec![0u8; identifier_search_bytes_length];
 
-    bytes.read_to_end(&mut search_space).unwrap();
+    bytes
+        .take(identifier_search_bytes_length as u64)
+        .read_to_end(&mut search_space)
+        .unwrap();
 
     search_bytes(&search_space, b"facet normal").is_some()
 }
