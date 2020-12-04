@@ -2,11 +2,13 @@
 //!
 //! ## Example
 //! ```rust
-//! use std::io::BufReader;
+//! use std::io::{BufReader, Read};
 //! use std::fs::File;
 //! let file = File::open("./fixtures/Root_Vase.stl").unwrap();
 //! let mut root_vase = BufReader::new(&file);
-//! let mesh: nom_stl::Mesh = nom_stl::parse_stl(&mut root_vase).unwrap();
+//! let mut root_vase_buf = vec![];
+//! root_vase.read_to_end(&mut root_vase_buf).unwrap();
+//! let mesh: nom_stl::Mesh = nom_stl::parse_stl(&mut root_vase_buf).unwrap();
 //! assert_eq!(mesh.triangles().len(), 596_736);
 //! ```
 
@@ -22,7 +24,6 @@ use nom::IResult;
 use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
-    io::{Read, Seek, SeekFrom},
 };
 
 type Result<T> = std::result::Result<T, Error>;
@@ -264,32 +265,28 @@ impl From<Mesh> for IndexMesh {
 /// binary. While a binary stl can in theory contain this sequence,
 /// the odds of this are low. This is a tradeoff to avoid something
 /// both more complicated and less performant.
-pub fn parse_stl<R: Read + Seek>(bytes: &mut R) -> Result<Mesh> {
-    if contains_facet_normal_bytes(bytes.by_ref()) {
-        bytes.seek(SeekFrom::Start(0))?;
-
-        let mut buf = vec![];
-
-        bytes.read_to_end(&mut buf)?;
-
-        mesh_ascii(&buf)
+pub fn parse_stl(bytes: &[u8]) -> Result<Mesh> {
+    if contains_facet_normal_bytes(&bytes) {
+        mesh_ascii(&bytes)
     } else {
-        bytes.seek(SeekFrom::Start(0))?;
-        mesh_binary(bytes.by_ref())
+        mesh_binary(&bytes)
     }
 }
 
-fn contains_facet_normal_bytes<R: Read>(bytes: &mut R) -> bool {
-    let identifier_search_bytes_length = match std::env::var("NOM_IDENTIFIER_SEARCH_BYTES_LENGTH") {
-        Ok(length) => length.parse().unwrap_or_else(|_| 1024),
-        Err(_e) => 1024,
+fn contains_facet_normal_bytes(bytes: &[u8]) -> bool {
+    let default_identifier_search_bytes_length =
+        match std::env::var("NOM_IDENTIFIER_SEARCH_BYTES_LENGTH") {
+            Ok(length) => length.parse().unwrap_or(1024),
+            Err(_e) => 1024,
+        };
+
+    let search_length = if bytes.len() < default_identifier_search_bytes_length {
+        bytes.len()
+    } else {
+        default_identifier_search_bytes_length
     };
 
-    let mut search_space = vec![0u8; identifier_search_bytes_length];
-
-    bytes.read_to_end(&mut search_space).unwrap();
-
-    search_bytes(&search_space, b"facet normal").is_some()
+    search_bytes(&bytes[..search_length], b"facet normal").is_some()
 }
 
 fn search_bytes(bytes: &[u8], target: &[u8]) -> Option<usize> {
@@ -319,73 +316,62 @@ fn search_bytes(bytes: &[u8], target: &[u8]) -> Option<usize> {
 // + 4 byte triangle size
 // + (n * (12 + 12 + 12 + 12 + 2))
 
-const HEADER_SIZE_BYTES: usize = 84; // 80 + 4
-const TRIANGLE_SIZE_BYTES: usize = 50; // 12 + 12 + 12 + 12 + 2
+const HEADER_SIZE_BYTES: usize = 80;
+const NUMBER_OF_TRIANGLES_BYTES: usize = 4;
 
-fn mesh_binary<R: Read>(mut s: R) -> Result<Mesh> {
-    let mut header_and_triangles_count = [0u8; HEADER_SIZE_BYTES];
-
-    s.read_exact(&mut header_and_triangles_count)?;
+fn mesh_binary(s: &[u8]) -> Result<Mesh> {
+    let (s, header_and_triangles_count): (&[u8], &[u8]) =
+        take::<usize, &[u8], (&[u8], nom::error::ErrorKind)>(84usize)(s)?;
 
     let reported_triangle_count = u32::from_le_bytes(
-        header_and_triangles_count[80..84]
+        header_and_triangles_count
+            [HEADER_SIZE_BYTES..HEADER_SIZE_BYTES + NUMBER_OF_TRIANGLES_BYTES]
             .try_into()
             .expect("Could not get four bytes to create u32"),
     );
 
-    let mut all_triangles: Vec<Triangle> = Vec::with_capacity(reported_triangle_count as usize);
+    let (_s, triangles) = count_preallocated(triangle_binary, reported_triangle_count as usize)(s)?;
 
-    let triangles_reader: TrianglesIter<R> =
-        TrianglesIter::new(s, reported_triangle_count as usize);
-
-    for triangle in triangles_reader {
-        all_triangles.push(triangle?);
-    }
-
-    let mesh = Mesh::new(all_triangles);
+    let mesh = Mesh::new(triangles);
 
     Ok(mesh)
 }
-#[derive(Debug)]
-struct TrianglesIter<R: Read> {
-    reader: R,
-    buf: Vec<u8>,
-    triangles_to_read: usize,
-    triangles_read: usize,
-}
 
-impl<R: Read> TrianglesIter<R> {
-    fn new(reader: R, triangles_to_read: usize) -> Self {
-        TrianglesIter {
-            reader,
-            buf: vec![0u8; TRIANGLE_SIZE_BYTES],
-            triangles_to_read,
-            triangles_read: 0,
-        }
-    }
-}
+/// this is a fork of `nom::multi::count` that preallocates its internal buffer,
+/// which makes a big difference for large files.
+/// this will fail if we are unable to allocate enough space for the buf,
+/// in contrast to `nom::multi::count` which incrementally allocates
+fn count_preallocated<I, O, E, F>(f: F, count: usize) -> impl Fn(I) -> IResult<I, Vec<O>, E>
+where
+    I: Clone + PartialEq,
+    F: Fn(I) -> IResult<I, O, E>,
+    E: nom::error::ParseError<I>,
+{
+    move |i: I| {
+        let mut input = i.clone();
+        let mut res = Vec::with_capacity(count);
 
-impl<R: Read> Iterator for TrianglesIter<R> {
-    type Item = Result<Triangle>;
-
-    fn next(&mut self) -> Option<Result<Triangle>> {
-        if self.triangles_read >= self.triangles_to_read {
-            None
-        } else {
-            match self.reader.read_exact(&mut self.buf) {
-                Ok(()) => match triangle_binary(&self.buf) {
-                    Ok((_r, t)) => {
-                        self.triangles_read += 1;
-                        Some(Ok(t))
-                    }
-                    Err(err) => {
-                        self.triangles_read += 1;
-                        Some(Err(Error::from(err)))
-                    }
-                },
-                Err(e) => Some(Err(Error::from(e))),
+        for _ in 0..count {
+            let input_ = input.clone();
+            match f(input_) {
+                Ok((i, o)) => {
+                    res.push(o);
+                    input = i;
+                }
+                Err(nom::Err::Error(e)) => {
+                    return Err(nom::Err::Error(E::append(
+                        i,
+                        nom::error::ErrorKind::Count,
+                        e,
+                    )));
+                }
+                Err(e) => {
+                    return Err(e);
+                }
             }
         }
+
+        Ok((input, res))
     }
 }
 
@@ -494,7 +480,7 @@ fn recognize_vertex(s: &[u8]) -> IResult<&[u8], ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::BufReader;
+    use std::io::{BufReader, Read};
 
     fn to_bytes(vec: [f32; 3]) -> [u8; 12] {
         [
@@ -518,14 +504,18 @@ mod tests {
         // derived from: https://www.thingiverse.com/thing:1187833
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let ascii_mesh: Mesh = parse_stl(&mut moon).unwrap();
+        let mut moon_buf = vec![];
+        moon.read_to_end(&mut moon_buf).unwrap();
+        let ascii_mesh: Mesh = parse_stl(&moon_buf).unwrap();
 
         assert_eq!(3698, ascii_mesh.triangles.len());
 
         // credit: https://www.thingiverse.com/thing:26227
         let vase_file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
         let mut root_vase = BufReader::new(&vase_file);
-        let binary_mesh: Mesh = parse_stl(&mut root_vase).unwrap();
+        let mut root_vase_buf = vec![];
+        root_vase.read_to_end(&mut root_vase_buf).unwrap();
+        let binary_mesh: Mesh = parse_stl(&root_vase_buf).unwrap();
 
         assert_eq!(596_736, binary_mesh.triangles.len());
     }
@@ -556,7 +546,7 @@ mod tests {
 
     #[test]
     fn parses_ascii_mesh() {
-        let mesh_string = "solid OpenSCAD_Model
+        let mesh_string = b"solid OpenSCAD_Model
                facet normal 0.642777 -2.54044e-006 0.766053
                  outer loop
                    vertex 8.08661 0.373289 54.1924
@@ -573,7 +563,7 @@ mod tests {
                endfacet
              endsolid OpenSCAD_Model";
 
-        let mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned()));
+        let mesh = parse_stl(mesh_string);
 
         let v1 = [
             [8.08661, 0.373289, 54.1924],
@@ -600,7 +590,9 @@ mod tests {
         // derived from: https://www.thingiverse.com/thing:1187833
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let mesh: Mesh = parse_stl(&mut moon).unwrap();
+        let mut moon_buf = vec![];
+        moon.read_to_end(&mut moon_buf).unwrap();
+        let mesh: Mesh = parse_stl(&mut moon_buf).unwrap();
 
         assert_eq!(3698, mesh.triangles.len());
     }
@@ -659,7 +651,7 @@ mod tests {
             0, 0, // uint16
         ];
 
-        let mut all = std::io::Cursor::new(vec![header, count, body].concat());
+        let mut all = vec![header, count, body].concat();
 
         let test_mesh = parse_stl(&mut all).unwrap();
 
@@ -683,8 +675,10 @@ mod tests {
         // credit: https://www.thingiverse.com/thing:26227
         let file = std::fs::File::open("./fixtures/Root_Vase.stl").unwrap();
         let mut root_vase = BufReader::new(&file);
+        let mut root_vase_buf = vec![];
+        root_vase.read_to_end(&mut root_vase_buf).unwrap();
         let start = std::time::Instant::now();
-        let mesh: Mesh = parse_stl(&mut root_vase).unwrap();
+        let mesh: Mesh = parse_stl(&mut root_vase_buf).unwrap();
         let end = std::time::Instant::now();
         println!("root_vase time: {:?}", end - start);
 
@@ -696,7 +690,9 @@ mod tests {
         // credit: https://www.thingiverse.com/thing:26227
         let file = std::fs::File::open("./fixtures/Root_Vase_solid_start.stl").unwrap();
         let mut root_vase = BufReader::new(&file);
-        let mesh: Mesh = parse_stl(&mut root_vase).unwrap();
+        let mut root_vase_buf = vec![];
+        root_vase.read_to_end(&mut root_vase_buf).unwrap();
+        let mesh: Mesh = parse_stl(&mut root_vase_buf).unwrap();
 
         assert_eq!(mesh.triangles.len(), 596_736);
     }
@@ -707,7 +703,9 @@ mod tests {
         let moon_file =
             std::fs::File::open("./fixtures/MOON_PRISM_POWER_no_closing_name.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let result: Mesh = parse_stl(&mut moon).unwrap();
+        let mut moon_buf = vec![];
+        moon.read_to_end(&mut moon_buf).unwrap();
+        let result: Mesh = parse_stl(&mut moon_buf).unwrap();
         assert_eq!(result.triangles.len(), 3698);
     }
 
@@ -717,13 +715,15 @@ mod tests {
 
         let moon_file = std::fs::File::open("./fixtures/MOON_PRISM_POWER_dos.stl").unwrap();
         let mut moon = BufReader::new(&moon_file);
-        let result: Mesh = parse_stl(&mut moon).unwrap();
+        let mut moon_buf = vec![];
+        moon.read_to_end(&mut moon_buf).unwrap();
+        let result: Mesh = parse_stl(&mut moon_buf).unwrap();
         assert_eq!(result.triangles.len(), 3698);
     }
 
     #[test]
     fn all_vertices() {
-        let mesh_string = "solid OpenSCAD_Model
+        let mesh_string = b"solid OpenSCAD_Model
                facet normal 0.642777 -2.54044e-006 0.766053
                  outer loop
                    vertex 8.08661 0.373289 54.1924
@@ -747,7 +747,7 @@ mod tests {
                endfacet
              endsolid OpenSCAD_Model";
 
-        let mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned())).unwrap();
+        let mesh = parse_stl(mesh_string).unwrap();
 
         assert_eq!(
             mesh.vertices_ref().collect::<Vec<&Vertex>>().len(),
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn makes_unique_vertices() {
-        let mesh_string = "solid OpenSCAD_Model
+        let mesh_string = b"solid OpenSCAD_Model
                facet normal 0.642777 -2.54044e-006 0.766053
                  outer loop
                    vertex 8.08661 0.373289 54.1924
@@ -786,14 +786,14 @@ mod tests {
                endfacet
              endsolid OpenSCAD_Model";
 
-        let mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned())).unwrap();
+        let mesh = parse_stl(mesh_string).unwrap();
 
         assert_eq!(mesh.unique_vertices().collect::<Vec<_>>().len(), 6);
     }
 
     #[test]
     fn creates_an_index_mesh() {
-        let mesh_string = "solid OpenSCAD_Model
+        let mesh_string = b"solid OpenSCAD_Model
                facet normal 0.642777 -2.54044e-006 0.766053
                  outer loop
                    vertex 8.08661 0.373289 54.1924
@@ -817,7 +817,7 @@ mod tests {
                endfacet
              endsolid OpenSCAD_Model";
 
-        let mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned())).unwrap();
+        let mesh = parse_stl(mesh_string).unwrap();
 
         let index_mesh: IndexMesh = mesh.into();
 
@@ -843,9 +843,7 @@ mod properties {
                 return TestResult::discard();
             }
 
-            TestResult::from_bool(
-                parse_stl::<std::io::Cursor<Vec<u8>>>(&mut std::io::Cursor::new(xs)).is_ok(),
-            )
+            TestResult::from_bool(parse_stl(&xs).is_ok())
         }
 
         let mut qc = QuickCheck::new();
