@@ -422,7 +422,7 @@ fn not_line_ending(c: u8) -> bool {
 }
 
 fn mesh_ascii(s: &[u8]) -> Result<Mesh> {
-    let (s, _) = tag("solid ")(s).map_err(to_crate_err)?;
+    let (s, _) = tag("solid")(s).map_err(to_crate_err)?;
     let (s, _) = opt(take_while1(not_line_ending))(s).map_err(to_crate_err)?;
     let (s, _) = line_ending(s).map_err(to_crate_err)?;
     let (s, triangles) = many1(triangle_ascii)(s)?;
@@ -794,6 +794,40 @@ mod tests {
     #[test]
     fn creates_an_index_mesh() {
         let mesh_string = "solid OpenSCAD_Model
+               facet normal 0.642777 -2.54044e-006 0.766053
+                 outer loop
+                   vertex 8.08661 0.373289 54.1924
+                   vertex 8.02181 0.689748 54.2468
+                   vertex 8.10936 0 54.1733
+                 endloop
+               endfacet
+               facet normal -0.281083 -0.678599 -0.678599
+                 outer loop
+                   vertex 8.08661 0.373289 54.1924
+                   vertex 8.02181 0.689748 54.2468
+                   vertex 0 7.342 8.6529
+                 endloop
+               endfacet
+               facet normal -0.281083 -0.678599 -0.678599
+                 outer loop
+                   vertex 8.08661 0.373289 54.1924
+                   vertex 8.02181 0.689748 54.2468
+                   vertex 4.0 4.0 4.0
+                 endloop
+               endfacet
+             endsolid OpenSCAD_Model";
+
+        let mesh = parse_stl(&mut std::io::Cursor::new(mesh_string.as_bytes().to_owned())).unwrap();
+
+        let index_mesh: IndexMesh = mesh.into();
+
+        assert_eq!(index_mesh.triangles().len(), 3);
+        assert_eq!(index_mesh.vertices().len(), 5);
+    }
+
+    #[test]
+    fn ascii_without_an_opening_file_name() {
+        let mesh_string = "solid
                facet normal 0.642777 -2.54044e-006 0.766053
                  outer loop
                    vertex 8.08661 0.373289 54.1924
