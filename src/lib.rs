@@ -333,7 +333,11 @@ fn mesh_binary<R: Read>(mut s: R) -> Result<Mesh> {
             .expect("Could not get four bytes to create u32"),
     );
 
-    let mut all_triangles: Vec<Triangle> = Vec::with_capacity(reported_triangle_count as usize);
+    // previously we optimized this with `Vec::with_capacity`, but
+    // fuzzing with afl++ uncovered that it is possible to crash the process
+    // by passing a specially crafted stl with a triangle count value larger
+    // than the system memory
+    let mut all_triangles: Vec<Triangle> = Vec::new();
 
     let triangles_reader: TrianglesIter<R> =
         TrianglesIter::new(s, reported_triangle_count as usize);
