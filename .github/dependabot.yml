@@ -1,0 +1,14 @@
+version: 2
+updates:
+- package-ecosystem: cargo
+  directory: "/"
+  schedule:
+    interval: daily
+  pull-request-branch-name:
+    separator: "-"
+  open-pull-requests-limit: 4
+  reviewers:
+  - ckampfe
+  allow:
+  - dependency-type: direct
+  - dependency-type: indirect
