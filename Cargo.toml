@@ -16,7 +16,7 @@ exclude = [
 ]
 
 [dependencies]
-nom = "5.1"
+nom = "6.2"
 
 [dev-dependencies]
 criterion = "0.3"
